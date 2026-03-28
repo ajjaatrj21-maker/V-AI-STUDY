@@ -1,0 +1,9 @@
+python-telegram-bot==20.7
+groq
+SpeechRecognition
+pydub
+requests
+Pillow
+gTTS
+aiohttp
+pytesseract
