@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 # ================= CONFIG =================
 BOT_TOKEN = "8619731533:AAGOPaGc_CcQaW5_B-HGUCeY3MetJFzoD0U"
-GROQ_API_KEY = "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"
+GROQ_API_KEY = "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"
 BOT_USERNAME = "@STUDYCONTROLLERV2_bot"
 
 OWNER_ID = 6305002830
