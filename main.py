@@ -8,8 +8,10 @@ import asyncio
 import uuid
 import io
 import logging
+import random
+import re
 from datetime import datetime, timedelta
-from groq import Groq
+from typing import Dict, List, Optional, Tuple
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters, ContextTypes, CommandHandler, CallbackQueryHandler
 import speech_recognition as sr
@@ -18,12 +20,8 @@ import requests
 from PIL import Image, ImageDraw, ImageFont
 from gtts import gTTS
 import pytesseract
-from typing import Dict, List, Optional
-import random
-import re
 
-# ================= PDF GENERATION IMPORTS =================
-import io
+# PDF Generation Imports
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Table, TableStyle, Image as RLImage, KeepTogether
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -32,8 +30,6 @@ from reportlab.lib import colors
 from reportlab.lib.units import inch, mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.graphics.shapes import Drawing, Rect, String, Line
-from reportlab.graphics import renderPDF
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
@@ -46,38 +42,97 @@ logger = logging.getLogger(__name__)
 
 # ================= CONFIG =================
 BOT_TOKEN = "8619731533:AAGOPaGc_CcQaW5_B-HGUCeY3MetJFzoD0U"
-GROQ_API_KEY = "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"
-BOT_USERNAME = "@STUDYCONTROLLERV2_bot"
 
+# API KEYS
+NOVA_API_KEY = "164deceb-f11e-4a18-9d20-fec20cf954fa"
+LUXAND_API_KEY = "0dd78b150b154ab28cad26ee9b999bd9"
+
+BOT_USERNAME = "@STUDYCONTROLLERV2_bot"
 OWNER_ID = 6305002830
 OWNER_NAME = "꧁⁣༒𓆩A𝔰𝔥𝔦𝔰𝔥𓆪༒꧂"
 
-# ================= FONT REGISTRATION =================
-def register_fonts():
-    """Register fonts for better PDF rendering"""
-    fonts_registered = []
-    font_paths = [
-        ('DejaVuSans', 'DejaVuSans.ttf'),
-        ('DejaVuSans-Bold', 'DejaVuSans-Bold.ttf'),
-        ('DejaVuSans-Oblique', 'DejaVuSans-Oblique.ttf'),
-        ('Arial', 'arial.ttf'),
-        ('ArialUnicode', 'arialuni.ttf'),
-        ('NotoSans', 'NotoSans-Regular.ttf'),
-        ('FreeSans', 'FreeSans.ttf')
-    ]
+# ================= NOVA AI FUNCTIONS =================
+class NovaAI:
+    def __init__(self, api_key):
+        self.api_key = api_key
+        self.api_url = "https://api.nova.ai/v1/chat/completions"
     
-    for font_name, font_file in font_paths:
+    async def generate_response(self, messages):
         try:
-            pdfmetrics.registerFont(TTFont(font_name, font_file))
-            fonts_registered.append(font_name)
-        except:
-            continue
+            headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+            payload = {"model": "nova-2", "messages": messages, "temperature": 0.7, "max_tokens": 1000}
+            response = requests.post(self.api_url, json=payload, headers=headers, timeout=30)
+            if response.status_code == 200:
+                result = response.json()
+                return result.get("choices", [{}])[0].get("message", {}).get("content", "")
+            else:
+                return await self.get_fallback_response(messages)
+        except Exception as e:
+            logger.error(f"Nova API Exception: {e}")
+            return await self.get_fallback_response(messages)
     
-    if fonts_registered:
-        return fonts_registered[0]
-    return 'Helvetica'
+    async def get_fallback_response(self, messages):
+        user_message = messages[-1].get("content", "") if messages else ""
+        if any(word in user_message.lower() for word in ['hello', 'hi', 'hey']):
+            return "Namaste! 🙏 Main aapka AI assistant hoon. Kaise help kar sakta hoon?"
+        elif "notes" in user_message.lower():
+            return "📚 Main aapke liye detailed notes bana sakta hoon. /notes [topic] use karein!"
+        elif "pdf" in user_message.lower():
+            return "📄 PDF ke liye /pdf, /pdfnotes, /pdfdiagram commands use karein!"
+        elif "game" in user_message.lower():
+            return "🎮 Games ke liye: /game, /quizgame, /hangman, /tictactoe, /trivia, /dice"
+        else:
+            return "Main aapki madad ke liye hoon! /help se saari commands dekhein."
 
-MAIN_FONT = register_fonts()
+# ================= LUXAND API FUNCTIONS =================
+class LuxandAPI:
+    def __init__(self, api_key):
+        self.api_key = api_key
+        self.face_api_url = "https://api.luxand.cloud/photo/detect"
+        self.emotion_api_url = "https://api.luxand.cloud/photo/emotions"
+        self.age_api_url = "https://api.luxand.cloud/photo/age"
+    
+    async def detect_faces(self, image_path):
+        try:
+            with open(image_path, 'rb') as img_file:
+                files = {'photo': img_file}
+                headers = {'token': self.api_key}
+                response = requests.post(self.face_api_url, files=files, headers=headers, timeout=30)
+            if response.status_code == 200:
+                return response.json()
+            return None
+        except Exception as e:
+            logger.error(f"Luxand detection error: {e}")
+            return None
+    
+    async def analyze_emotions(self, image_path):
+        try:
+            with open(image_path, 'rb') as img_file:
+                files = {'photo': img_file}
+                headers = {'token': self.api_key}
+                response = requests.post(self.emotion_api_url, files=files, headers=headers, timeout=30)
+            if response.status_code == 200:
+                return response.json()
+            return None
+        except Exception as e:
+            logger.error(f"Emotion analysis error: {e}")
+            return None
+    
+    async def estimate_age(self, image_path):
+        try:
+            with open(image_path, 'rb') as img_file:
+                files = {'photo': img_file}
+                headers = {'token': self.api_key}
+                response = requests.post(self.age_api_url, files=files, headers=headers, timeout=30)
+            if response.status_code == 200:
+                return response.json()
+            return None
+        except Exception as e:
+            logger.error(f"Age estimation error: {e}")
+            return None
+
+nova_ai = NovaAI(NOVA_API_KEY)
+luxand_api = LuxandAPI(LUXAND_API_KEY)
 
 # ================= DATABASE =================
 thread_local = threading.local()
@@ -91,601 +146,79 @@ def get_db():
 conn, cursor = get_db()
 
 # Create all tables
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS users(
-    id INTEGER PRIMARY KEY,
-    username TEXT,
-    first_name TEXT,
-    last_name TEXT,
-    join_date TEXT,
-    last_active TEXT,
-    chat_count INTEGER DEFAULT 0,
-    is_blocked INTEGER DEFAULT 0,
-    daily_usage_count INTEGER DEFAULT 0,
-    last_daily_reset TEXT
-)
-""")
+cursor.execute("""CREATE TABLE IF NOT EXISTS users(
+    id INTEGER PRIMARY KEY, username TEXT, first_name TEXT, last_name TEXT,
+    join_date TEXT, last_active TEXT, chat_count INTEGER DEFAULT 0, is_blocked INTEGER DEFAULT 0,
+    daily_usage_count INTEGER DEFAULT 0, last_daily_reset TEXT, points INTEGER DEFAULT 0
+)""")
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS chat_history(
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    message TEXT,
-    response TEXT,
-    timestamp TEXT
-)
-""")
+cursor.execute("""CREATE TABLE IF NOT EXISTS chat_history(
+    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, message TEXT, response TEXT, timestamp TEXT
+)""")
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS user_preferences(
-    user_id INTEGER PRIMARY KEY,
-    language TEXT DEFAULT 'en',
-    response_style TEXT DEFAULT 'balanced',
-    theme TEXT DEFAULT 'default'
-)
-""")
+cursor.execute("""CREATE TABLE IF NOT EXISTS user_preferences(
+    user_id INTEGER PRIMARY KEY, language TEXT DEFAULT 'en', response_style TEXT DEFAULT 'balanced', theme TEXT DEFAULT 'default'
+)""")
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS reminders(
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    reminder_text TEXT,
-    reminder_time TEXT,
-    created_at TEXT,
-    status TEXT DEFAULT 'pending'
-)
-""")
+cursor.execute("""CREATE TABLE IF NOT EXISTS reminders(
+    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, reminder_text TEXT, reminder_time TEXT, created_at TEXT, status TEXT DEFAULT 'pending'
+)""")
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS groups(
-    group_id INTEGER PRIMARY KEY,
-    group_name TEXT,
-    added_date TEXT,
-    is_active INTEGER DEFAULT 1
-)
-""")
+cursor.execute("""CREATE TABLE IF NOT EXISTS groups(
+    group_id INTEGER PRIMARY KEY, group_name TEXT, added_date TEXT, is_active INTEGER DEFAULT 1
+)""")
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS feedback(
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    username TEXT,
-    user_name TEXT,
-    group_id INTEGER,
-    group_name TEXT,
-    feedback_text TEXT,
-    rating INTEGER DEFAULT 5,
-    created_at TEXT
-)
-""")
+cursor.execute("""CREATE TABLE IF NOT EXISTS feedback(
+    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, username TEXT, user_name TEXT,
+    group_id INTEGER, group_name TEXT, feedback_text TEXT, rating INTEGER DEFAULT 5, created_at TEXT
+)""")
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS complaints(
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    username TEXT,
-    user_name TEXT,
-    group_id INTEGER,
-    group_name TEXT,
-    complaint_text TEXT,
-    status TEXT DEFAULT 'pending',
-    created_at TEXT,
-    resolved_at TEXT
-)
-""")
+cursor.execute("""CREATE TABLE IF NOT EXISTS complaints(
+    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, username TEXT, user_name TEXT,
+    group_id INTEGER, group_name TEXT, complaint_text TEXT, status TEXT DEFAULT 'pending',
+    created_at TEXT, resolved_at TEXT
+)""")
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS daily_usage(
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    usage_date TEXT,
-    chat_count INTEGER DEFAULT 0,
-    last_activity TEXT
-)
-""")
+cursor.execute("""CREATE TABLE IF NOT EXISTS daily_usage(
+    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, usage_date TEXT, chat_count INTEGER DEFAULT 0, last_activity TEXT
+)""")
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS flashcards(
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    question TEXT,
-    answer TEXT,
-    category TEXT,
-    created_at TEXT,
-    review_count INTEGER DEFAULT 0
-)
-""")
+cursor.execute("""CREATE TABLE IF NOT EXISTS flashcards(
+    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, question TEXT, answer TEXT,
+    category TEXT, created_at TEXT, review_count INTEGER DEFAULT 0
+)""")
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS notes(
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    title TEXT,
-    content TEXT,
-    category TEXT,
-    created_at TEXT,
-    updated_at TEXT
-)
-""")
+cursor.execute("""CREATE TABLE IF NOT EXISTS notes(
+    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, title TEXT, content TEXT,
+    category TEXT, created_at TEXT, updated_at TEXT
+)""")
+
+cursor.execute("""CREATE TABLE IF NOT EXISTS user_scores(
+    user_id INTEGER PRIMARY KEY, total_points INTEGER DEFAULT 0, games_won INTEGER DEFAULT 0,
+    quizzes_passed INTEGER DEFAULT 0, daily_streak INTEGER DEFAULT 0, last_daily_claim TEXT
+)""")
+
+cursor.execute("""CREATE TABLE IF NOT EXISTS game_stats(
+    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, game_name TEXT, score INTEGER, played_at TEXT
+)""")
 
 conn.commit()
 
-# ================= PDF STYLES =================
-def get_pdf_styles():
-    """Create professional PDF styles"""
-    styles = getSampleStyleSheet()
-    
-    # Title Style
-    title_style = ParagraphStyle(
-        'CustomTitle',
-        parent=styles['Title'],
-        fontName=MAIN_FONT,
-        fontSize=28,
-        textColor=colors.HexColor('#1E3C72'),
-        alignment=TA_CENTER,
-        spaceAfter=30,
-        leading=32,
-        spaceBefore=20
-    )
-    
-    # Heading 1 Style
-    heading1_style = ParagraphStyle(
-        'CustomHeading1',
-        parent=styles['Heading1'],
-        fontName=MAIN_FONT,
-        fontSize=20,
-        textColor=colors.HexColor('#2A5298'),
-        alignment=TA_LEFT,
-        spaceAfter=12,
-        spaceBefore=18,
-        leading=24,
-        borderPadding=5,
-        backColor=colors.HexColor('#E8F0FF')
-    )
-    
-    # Heading 2 Style
-    heading2_style = ParagraphStyle(
-        'CustomHeading2',
-        parent=styles['Heading2'],
-        fontName=MAIN_FONT,
-        fontSize=16,
-        textColor=colors.HexColor('#4A90E2'),
-        alignment=TA_LEFT,
-        spaceAfter=10,
-        spaceBefore=12,
-        leading=20
-    )
-    
-    # Heading 3 Style
-    heading3_style = ParagraphStyle(
-        'CustomHeading3',
-        parent=styles['Heading3'],
-        fontName=MAIN_FONT,
-        fontSize=14,
-        textColor=colors.HexColor('#6C63FF'),
-        alignment=TA_LEFT,
-        spaceAfter=8,
-        spaceBefore=10,
-        leading=18
-    )
-    
-    # Normal Text Style
-    normal_style = ParagraphStyle(
-        'CustomNormal',
-        parent=styles['Normal'],
-        fontName=MAIN_FONT,
-        fontSize=11,
-        alignment=TA_JUSTIFY,
-        spaceAfter=6,
-        leading=16,
-        textColor=colors.HexColor('#2C3E50')
-    )
-    
-    # Bullet Point Style
-    bullet_style = ParagraphStyle(
-        'BulletStyle',
-        parent=styles['Normal'],
-        fontName=MAIN_FONT,
-        fontSize=11,
-        leftIndent=25,
-        alignment=TA_LEFT,
-        spaceAfter=4,
-        leading=16,
-        bulletText='•'
-    )
-    
-    # Numbered List Style
-    numbered_style = ParagraphStyle(
-        'NumberedStyle',
-        parent=styles['Normal'],
-        fontName=MAIN_FONT,
-        fontSize=11,
-        leftIndent=25,
-        alignment=TA_LEFT,
-        spaceAfter=4,
-        leading=16
-    )
-    
-    # Code/Quote Style
-    quote_style = ParagraphStyle(
-        'QuoteStyle',
-        parent=styles['Normal'],
-        fontName=MAIN_FONT,
-        fontSize=10,
-        alignment=TA_LEFT,
-        spaceAfter=8,
-        leading=14,
-        backColor=colors.HexColor('#F5F5F5'),
-        leftIndent=20,
-        rightIndent=20,
-        borderPadding=8,
-        textColor=colors.HexColor('#555555')
-    )
-    
-    return {
-        'title': title_style,
-        'heading1': heading1_style,
-        'heading2': heading2_style,
-        'heading3': heading3_style,
-        'normal': normal_style,
-        'bullet': bullet_style,
-        'numbered': numbered_style,
-        'quote': quote_style
-    }
-
-def clean_text_for_pdf(text):
-    """Clean and prepare text for PDF rendering"""
-    # Replace special mathematical symbols
-    replacements = {
-        '∈': 'element of',
-        '∑': 'sum',
-        '∫': 'integral',
-        '√': 'square root',
-        'π': 'pi',
-        'θ': 'theta',
-        'Δ': 'delta',
-        'α': 'alpha',
-        'β': 'beta',
-        'γ': 'gamma',
-        '→': '->',
-        '←': '<-',
-        '↑': 'up',
-        '↓': 'down',
-        '★': '*',
-        '☆': '*',
-        '✓': '[✓]',
-        '✗': '[✗]',
-        '•': '•',
-        '–': '-',
-        '—': '-',
-        '"': '"',
-        '"': '"',
-        ''': "'",
-        ''': "'",
-        '≈': 'approximately',
-        '≠': 'not equal to',
-        '≤': 'less than or equal to',
-        '≥': 'greater than or equal to',
-    }
-    
-    for old, new in replacements.items():
-        text = text.replace(old, new)
-    
-    # Escape HTML entities
-    text = text.replace('&', '&amp;')
-    text = text.replace('<', '&lt;')
-    text = text.replace('>', '&gt;')
-    
-    return text
-
-def parse_content_to_elements(content, styles):
-    """Parse content into PDF elements with proper formatting"""
-    story = []
-    lines = content.split('\n')
-    i = 0
-    
-    while i < len(lines):
-        line = lines[i].strip()
-        
-        if not line:
-            story.append(Spacer(1, 6))
-            i += 1
+# ================= FONT REGISTRATION =================
+def register_fonts():
+    fonts_registered = []
+    font_paths = [('DejaVuSans', 'DejaVuSans.ttf'), ('Arial', 'arial.ttf'), ('FreeSans', 'FreeSans.ttf')]
+    for font_name, font_file in font_paths:
+        try:
+            pdfmetrics.registerFont(TTFont(font_name, font_file))
+            fonts_registered.append(font_name)
+        except:
             continue
-        
-        # Check for main headings (## or **Title**)
-        if line.startswith('##') or (line.startswith('**') and line.endswith('**')):
-            heading = line.strip('#').strip('*').strip()
-            story.append(Paragraph(clean_text_for_pdf(heading), styles['heading1']))
-            story.append(Spacer(1, 6))
-            
-        # Check for subheadings (### or ***)
-        elif line.startswith('###') or line.startswith('***'):
-            heading = line.strip('#').strip('*').strip()
-            story.append(Paragraph(clean_text_for_pdf(heading), styles['heading2']))
-            story.append(Spacer(1, 6))
-            
-        # Check for bullet points
-        elif line.startswith('•') or line.startswith('-') or line.startswith('*'):
-            bullet_text = line.lstrip('•-* ').strip()
-            story.append(Paragraph(f'• {clean_text_for_pdf(bullet_text)}', styles['bullet']))
-            
-        # Check for numbered lists
-        elif re.match(r'^\d+\.', line):
-            story.append(Paragraph(clean_text_for_pdf(line), styles['numbered']))
-            
-        # Check for quotes (lines starting with >)
-        elif line.startswith('>'):
-            quote_text = line.lstrip('> ').strip()
-            story.append(Paragraph(clean_text_for_pdf(quote_text), styles['quote']))
-            
-        # Normal text with paragraph formatting
-        else:
-            # Split long paragraphs into lines
-            if len(line) > 100:
-                words = line.split()
-                current_line = ""
-                for word in words:
-                    if len(current_line) + len(word) < 100:
-                        current_line += word + " "
-                    else:
-                        if current_line:
-                            story.append(Paragraph(clean_text_for_pdf(current_line.strip()), styles['normal']))
-                        current_line = word + " "
-                if current_line:
-                    story.append(Paragraph(clean_text_for_pdf(current_line.strip()), styles['normal']))
-            else:
-                story.append(Paragraph(clean_text_for_pdf(line), styles['normal']))
-        
-        story.append(Spacer(1, 2))
-        i += 1
-    
-    return story
+    return fonts_registered[0] if fonts_registered else 'Helvetica'
 
-# ================= DIAGRAM GENERATION =================
-def create_flowchart_diagram(title, steps):
-    """Create a flowchart diagram"""
-    plt.figure(figsize=(12, 8))
-    plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial Unicode MS']
-    plt.rcParams['axes.unicode_minus'] = False
-    
-    # Create flowchart using matplotlib
-    fig, ax = plt.subplots(figsize=(10, 8))
-    ax.set_xlim(0, 10)
-    ax.set_ylim(0, 10)
-    ax.axis('off')
-    
-    # Add title
-    ax.text(5, 9.5, title, fontsize=16, ha='center', va='center', weight='bold')
-    
-    # Create boxes for each step
-    y_positions = np.linspace(8, 2, len(steps))
-    colors_list = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7D794']
-    
-    for i, (step, y) in enumerate(zip(steps, y_positions)):
-        # Draw box
-        rect = plt.Rectangle((3, y-0.4), 4, 0.8, facecolor=colors_list[i % len(colors_list)], edgecolor='black', linewidth=2)
-        ax.add_patch(rect)
-        
-        # Add text
-        step_text = f"{i+1}. {step[:50]}"
-        ax.text(5, y, step_text, fontsize=10, ha='center', va='center', wrap=True)
-        
-        # Draw arrow
-        if i < len(steps) - 1:
-            ax.annotate('', xy=(5, y-0.5), xytext=(5, y-0.4), 
-                       arrowprops=dict(arrowstyle='->', lw=2, color='gray'))
-    
-    plt.tight_layout()
-    
-    # Save to bytes
-    img_buffer = io.BytesIO()
-    plt.savefig(img_buffer, format='png', dpi=150, bbox_inches='tight', facecolor='white')
-    plt.close()
-    img_buffer.seek(0)
-    return img_buffer
-
-def create_mindmap_diagram(title, concepts):
-    """Create a mindmap diagram"""
-    plt.figure(figsize=(12, 10))
-    plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial Unicode MS']
-    
-    fig, ax = plt.subplots(figsize=(10, 10))
-    ax.set_xlim(0, 10)
-    ax.set_ylim(0, 10)
-    ax.axis('off')
-    
-    # Center circle
-    center = (5, 5)
-    circle = plt.Circle(center, 0.8, facecolor='#FF6B6B', edgecolor='black', linewidth=2)
-    ax.add_patch(circle)
-    ax.text(center[0], center[1], title[:30], fontsize=12, ha='center', va='center', weight='bold', color='white')
-    
-    # Surrounding concepts
-    angles = np.linspace(0, 2*np.pi, len(concepts), endpoint=False)
-    radius = 2.5
-    
-    colors_list = ['#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7D794', '#FFB6C1']
-    
-    for i, (concept, angle) in enumerate(zip(concepts[:12], angles)):
-        x = center[0] + radius * np.cos(angle)
-        y = center[1] + radius * np.sin(angle)
-        
-        # Draw circle for concept
-        concept_circle = plt.Circle((x, y), 0.6, facecolor=colors_list[i % len(colors_list)], edgecolor='black', linewidth=1.5)
-        ax.add_patch(concept_circle)
-        
-        # Add text
-        concept_text = concept[:40]
-        ax.text(x, y, concept_text, fontsize=8, ha='center', va='center', wrap=True)
-        
-        # Draw connecting line
-        ax.plot([center[0], x], [center[1], y], 'k-', linewidth=1, alpha=0.5)
-    
-    plt.tight_layout()
-    
-    img_buffer = io.BytesIO()
-    plt.savefig(img_buffer, format='png', dpi=150, bbox_inches='tight', facecolor='white')
-    plt.close()
-    img_buffer.seek(0)
-    return img_buffer
-
-def create_timeline_diagram(title, events):
-    """Create a timeline diagram"""
-    plt.figure(figsize=(14, 6))
-    plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial Unicode MS']
-    
-    fig, ax = plt.subplots(figsize=(12, 5))
-    
-    # Create timeline
-    y = 0
-    ax.set_ylim(-1, 1)
-    ax.set_xlim(-0.5, len(events) - 0.5)
-    ax.axis('off')
-    
-    # Draw horizontal line
-    ax.hlines(y, -0.5, len(events) - 0.5, colors='black', linewidth=2)
-    
-    colors_list = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD']
-    
-    for i, event in enumerate(events[:10]):
-        x = i
-        
-        # Draw point
-        ax.plot(x, y, 'o', markersize=10, color=colors_list[i % len(colors_list)], markeredgecolor='black')
-        
-        # Add text above
-        event_text = event[:50]
-        ax.text(x, 0.2, event_text, fontsize=9, ha='center', va='bottom', wrap=True, rotation=45)
-        
-        # Add number
-        ax.text(x, -0.2, str(i+1), fontsize=10, ha='center', va='top', weight='bold')
-    
-    ax.set_title(title, fontsize=14, weight='bold', pad=20)
-    plt.tight_layout()
-    
-    img_buffer = io.BytesIO()
-    plt.savefig(img_buffer, format='png', dpi=150, bbox_inches='tight', facecolor='white')
-    plt.close()
-    img_buffer.seek(0)
-    return img_buffer
-
-def create_table_diagram(title, headers, data):
-    """Create a table diagram"""
-    plt.figure(figsize=(12, max(4, len(data) * 0.5)))
-    plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial Unicode MS']
-    
-    fig, ax = plt.subplots(figsize=(10, max(4, len(data) * 0.5)))
-    ax.axis('off')
-    
-    # Create table
-    table_data = [headers] + data[:15]
-    table = ax.table(cellText=table_data, loc='center', cellLoc='center', colWidths=[0.3] * len(headers))
-    table.auto_set_font_size(False)
-    table.set_fontsize(9)
-    table.scale(1, 1.5)
-    
-    # Style the table
-    for i in range(len(table_data)):
-        for j in range(len(headers)):
-            cell = table[(i, j)]
-            if i == 0:
-                cell.set_facecolor('#4ECDC4')
-                cell.set_text_props(weight='bold', color='white')
-            else:
-                cell.set_facecolor('#F5F5F5' if i % 2 == 0 else 'white')
-    
-    ax.set_title(title, fontsize=14, weight='bold', pad=20)
-    plt.tight_layout()
-    
-    img_buffer = io.BytesIO()
-    plt.savefig(img_buffer, format='png', dpi=150, bbox_inches='tight', facecolor='white')
-    plt.close()
-    img_buffer.seek(0)
-    return img_buffer
-
-# ================= MAIN PDF GENERATION =================
-def generate_complete_pdf(title, content, include_diagram=False, diagram_type=None, diagram_data=None):
-    """Generate complete PDF with professional formatting and diagrams"""
-    buffer = io.BytesIO()
-    
-    # Create PDF document
-    doc = SimpleDocTemplate(
-        buffer,
-        pagesize=A4,
-        rightMargin=72,
-        leftMargin=72,
-        topMargin=72,
-        bottomMargin=72,
-        title=title,
-        author="Study Controller Bot"
-    )
-    
-    styles = get_pdf_styles()
-    story = []
-    
-    # Add decorative line
-    story.append(Spacer(1, 10))
-    
-    # Add title
-    story.append(Paragraph(clean_text_for_pdf(title), styles['title']))
-    
-    # Add date and info
-    date_style = ParagraphStyle('DateStyle', parent=styles['normal'], fontSize=9, textColor=colors.grey, alignment=TA_RIGHT)
-    story.append(Paragraph(f"Generated on: {datetime.now().strftime('%B %d, %Y at %H:%M')}", date_style))
-    story.append(Paragraph(f"Generated by: Study Controller Bot", date_style))
-    story.append(Spacer(1, 20))
-    
-    # Add content
-    content_elements = parse_content_to_elements(content, styles)
-    story.extend(content_elements)
-    
-    # Add diagram if requested
-    if include_diagram and diagram_data:
-        story.append(PageBreak())
-        
-        # Diagram title
-        story.append(Paragraph("📊 Visual Diagram", styles['heading1']))
-        story.append(Spacer(1, 10))
-        
-        # Create diagram based on type
-        if diagram_type == 'flowchart':
-            diagram_img = create_flowchart_diagram(title, diagram_data[:10])
-        elif diagram_type == 'mindmap':
-            diagram_img = create_mindmap_diagram(title, diagram_data[:12])
-        elif diagram_type == 'timeline':
-            diagram_img = create_timeline_diagram(title, diagram_data[:10])
-        elif diagram_type == 'table':
-            if isinstance(diagram_data, dict):
-                diagram_img = create_table_diagram(title, diagram_data.get('headers', ['Item', 'Description']), diagram_data.get('data', []))
-            else:
-                diagram_img = create_table_diagram(title, ['Step', 'Description'], [[i+1, item] for i, item in enumerate(diagram_data[:10])])
-        else:
-            diagram_img = create_mindmap_diagram(title, diagram_data[:12])
-        
-        # Add diagram to PDF
-        img = RLImage(diagram_img, width=6*inch, height=4*inch)
-        story.append(KeepTogether([img, Spacer(1, 10)]))
-        
-        # Add diagram description
-        desc_style = ParagraphStyle('DescStyle', parent=styles['normal'], fontSize=9, textColor=colors.grey, alignment=TA_CENTER)
-        story.append(Paragraph(f"Figure: {title} - Visual Representation", desc_style))
-    
-    # Add footer with page numbers
-    def add_page_number(canvas, doc):
-        page_num = canvas.getPageNumber()
-        canvas.saveState()
-        canvas.setFont(MAIN_FONT, 8)
-        canvas.setFillColor(colors.grey)
-        canvas.drawCentredString(doc.width / 2 + doc.leftMargin, doc.bottomMargin - 20, f"Page {page_num}")
-        canvas.drawRightString(doc.width + doc.leftMargin - 20, doc.bottomMargin - 20, "Study Controller Bot")
-        canvas.restoreState()
-    
-    # Build PDF
-    doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
-    return buffer.getvalue()
+MAIN_FONT = register_fonts()
 
 # ================= AI ENGINE =================
-client = Groq(api_key=GROQ_API_KEY)
 user_memory = {}
 
 async def ask_ai_hinglish(user_id, text):
@@ -703,31 +236,15 @@ async def ask_ai_hinglish(user_id, text):
         return f"👑 My owner is {OWNER_NAME}! Unhone mujhe banaya hai. 🙏"
     
     system_prompt = f"""Tum ek smart Telegram AI bot ho. Tumhare owner {OWNER_NAME} hain.
-    Language: {language}
-    Response Style: {style}
-    Be friendly and helpful. Focus on study-related topics.
-    Answer in Hinglish (Hindi + English mix).
-    Format your responses with:
-    - **bold** for main headings
-    - • for bullet points
-    - Numbers for steps
-    - Clear sections"""
+    Language: {language}, Style: {style}. Be friendly and helpful. Format responses with **bold** for headings, • for bullets."""
     
     messages = [{"role": "system", "content": system_prompt}] + user_memory[user_id]
+    reply = await nova_ai.generate_response(messages)
     
-    try:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=messages,
-            temperature=0.7,
-            max_tokens=1000
-        )
-        reply = response.choices[0].message.content
+    if reply:
         user_memory[user_id].append({"role": "assistant", "content": reply})
         return reply
-    except Exception as e:
-        logger.error(f"AI Error: {e}")
-        return "❌ Kuch technical problem hai! Thoda der baad try karo."
+    return "❌ Technical problem! Try again."
 
 # ================= DATABASE FUNCTIONS =================
 def ensure_connection():
@@ -744,10 +261,9 @@ def add_user(user_id, username, first_name, last_name):
     conn, cursor = ensure_connection()
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     try:
-        cursor.execute("""
-            INSERT OR IGNORE INTO users (id, username, first_name, last_name, join_date, last_active, chat_count, last_daily_reset) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (user_id, username, first_name, last_name, current_time, current_time, 0, current_time))
+        cursor.execute("""INSERT OR IGNORE INTO users (id, username, first_name, last_name, join_date, last_active, chat_count, last_daily_reset) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", (user_id, username, first_name, last_name, current_time, current_time, 0, current_time))
+        cursor.execute("INSERT OR IGNORE INTO user_scores (user_id, total_points, games_won, quizzes_passed, daily_streak) VALUES (?, 0, 0, 0, 0)", (user_id,))
         conn.commit()
     except Exception as e:
         logger.error(f"Error adding user: {e}")
@@ -760,21 +276,16 @@ def update_user_activity(user_id, chat_type="private", group_id=None, group_name
         conn.commit()
         
         today = datetime.now().strftime("%Y-%m-%d")
-        cursor.execute("""
-            INSERT INTO daily_usage (user_id, usage_date, chat_count, last_activity)
-            VALUES (?, ?, 1, ?)
-            ON CONFLICT(user_id, usage_date) DO UPDATE SET
-            chat_count = chat_count + 1,
-            last_activity = ?
-            """, (user_id, today, current_time, current_time))
+        cursor.execute("""INSERT INTO daily_usage (user_id, usage_date, chat_count, last_activity)
+            VALUES (?, ?, 1, ?) ON CONFLICT(user_id, usage_date) DO UPDATE SET chat_count = chat_count + 1, last_activity = ?""",
+            (user_id, today, current_time, current_time))
         conn.commit()
         
         cursor.execute("SELECT last_daily_reset FROM users WHERE id = ?", (user_id,))
         last_reset = cursor.fetchone()
-        if last_reset and last_reset[0]:
-            if datetime.strptime(last_reset[0], "%Y-%m-%d %H:%M:%S").date() != datetime.now().date():
-                cursor.execute("UPDATE users SET daily_usage_count = 0, last_daily_reset = ? WHERE id = ?", (current_time, user_id))
-                conn.commit()
+        if last_reset and last_reset[0] and datetime.strptime(last_reset[0], "%Y-%m-%d %H:%M:%S").date() != datetime.now().date():
+            cursor.execute("UPDATE users SET daily_usage_count = 0, last_daily_reset = ? WHERE id = ?", (current_time, user_id))
+            conn.commit()
         
         cursor.execute("UPDATE users SET daily_usage_count = daily_usage_count + 1 WHERE id = ?", (user_id,))
         conn.commit()
@@ -815,10 +326,8 @@ def set_user_preference(user_id, pref_type, value):
 def save_feedback(user_id, username, user_name, group_id, group_name, feedback_text):
     conn, cursor = ensure_connection()
     try:
-        cursor.execute("""
-            INSERT INTO feedback (user_id, username, user_name, group_id, group_name, feedback_text, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (user_id, username, user_name, group_id, group_name, feedback_text, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        cursor.execute("""INSERT INTO feedback (user_id, username, user_name, group_id, group_name, feedback_text, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)""", (user_id, username, user_name, group_id, group_name, feedback_text, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
         conn.commit()
         return True
     except Exception as e:
@@ -828,10 +337,8 @@ def save_feedback(user_id, username, user_name, group_id, group_name, feedback_t
 def save_complaint(user_id, username, user_name, group_id, group_name, complaint_text):
     conn, cursor = ensure_connection()
     try:
-        cursor.execute("""
-            INSERT INTO complaints (user_id, username, user_name, group_id, group_name, complaint_text, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (user_id, username, user_name, group_id, group_name, complaint_text, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        cursor.execute("""INSERT INTO complaints (user_id, username, user_name, group_id, group_name, complaint_text, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)""", (user_id, username, user_name, group_id, group_name, complaint_text, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
         conn.commit()
         return cursor.lastrowid
     except Exception as e:
@@ -955,6 +462,117 @@ def delete_note(note_id):
     except:
         return False
 
+def add_points(user_id, points):
+    conn, cursor = ensure_connection()
+    try:
+        cursor.execute("UPDATE user_scores SET total_points = total_points + ? WHERE user_id = ?", (points, user_id))
+        conn.commit()
+        return True
+    except:
+        return False
+
+def get_user_points(user_id):
+    conn, cursor = ensure_connection()
+    try:
+        cursor.execute("SELECT total_points, games_won, quizzes_passed, daily_streak FROM user_scores WHERE user_id = ?", (user_id,))
+        return cursor.fetchone()
+    except:
+        return (0, 0, 0, 0)
+
+def update_game_stats(user_id, game_name, score):
+    conn, cursor = ensure_connection()
+    try:
+        cursor.execute("INSERT INTO game_stats (user_id, game_name, score, played_at) VALUES (?, ?, ?, ?)",
+                      (user_id, game_name, score, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        if game_name in ['Quiz', 'Trivia'] and score > 0:
+            cursor.execute("UPDATE user_scores SET quizzes_passed = quizzes_passed + 1 WHERE user_id = ?", (user_id,))
+        if score > 0:
+            cursor.execute("UPDATE user_scores SET games_won = games_won + 1 WHERE user_id = ?", (user_id,))
+        conn.commit()
+    except:
+        pass
+
+# ================= PDF STYLES =================
+def get_pdf_styles():
+    styles = getSampleStyleSheet()
+    
+    title_style = ParagraphStyle('CustomTitle', parent=styles['Title'], fontName=MAIN_FONT, fontSize=28,
+        textColor=colors.HexColor('#1E3C72'), alignment=TA_CENTER, spaceAfter=30, leading=32, spaceBefore=20)
+    heading1_style = ParagraphStyle('CustomHeading1', parent=styles['Heading1'], fontName=MAIN_FONT, fontSize=20,
+        textColor=colors.HexColor('#2A5298'), alignment=TA_LEFT, spaceAfter=12, spaceBefore=18, leading=24)
+    heading2_style = ParagraphStyle('CustomHeading2', parent=styles['Heading2'], fontName=MAIN_FONT, fontSize=16,
+        textColor=colors.HexColor('#4A90E2'), alignment=TA_LEFT, spaceAfter=10, spaceBefore=12, leading=20)
+    normal_style = ParagraphStyle('CustomNormal', parent=styles['Normal'], fontName=MAIN_FONT, fontSize=11,
+        alignment=TA_JUSTIFY, spaceAfter=6, leading=16, textColor=colors.HexColor('#2C3E50'))
+    bullet_style = ParagraphStyle('BulletStyle', parent=styles['Normal'], fontName=MAIN_FONT, fontSize=11,
+        leftIndent=25, alignment=TA_LEFT, spaceAfter=4, leading=16, bulletText='•')
+    
+    return {'title': title_style, 'heading1': heading1_style, 'heading2': heading2_style, 'normal': normal_style, 'bullet': bullet_style}
+
+def clean_text_for_pdf(text):
+    replacements = {'∈': 'element of', '∑': 'sum', '∫': 'integral', '√': 'square root', 'π': 'pi',
+        '→': '->', '•': '•', '–': '-', '&': '&amp;', '<': '&lt;', '>': '&gt;'}
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return text
+
+def parse_content_to_elements(content, styles):
+    story = []
+    lines = content.split('\n')
+    for line in lines:
+        line = line.strip()
+        if not line:
+            story.append(Spacer(1, 6))
+        elif line.startswith('##') or (line.startswith('**') and line.endswith('**')):
+            heading = line.strip('#').strip('*').strip()
+            story.append(Paragraph(clean_text_for_pdf(heading), styles['heading1']))
+        elif line.startswith('•') or line.startswith('-') or line.startswith('*'):
+            bullet_text = line.lstrip('•-* ').strip()
+            story.append(Paragraph(f'• {clean_text_for_pdf(bullet_text)}', styles['bullet']))
+        else:
+            story.append(Paragraph(clean_text_for_pdf(line), styles['normal']))
+        story.append(Spacer(1, 2))
+    return story
+
+def generate_complete_pdf(title, content, include_diagram=False, diagram_type=None, diagram_data=None):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=72, leftMargin=72, topMargin=72, bottomMargin=72)
+    styles = get_pdf_styles()
+    story = []
+    story.append(Spacer(1, 10))
+    story.append(Paragraph(clean_text_for_pdf(title), styles['title']))
+    story.append(Spacer(1, 20))
+    content_elements = parse_content_to_elements(content, styles)
+    story.extend(content_elements)
+    
+    if include_diagram and diagram_data:
+        story.append(PageBreak())
+        story.append(Paragraph("📊 Visual Diagram", styles['heading1']))
+        story.append(Spacer(1, 10))
+        # Create simple diagram representation
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.axis('off')
+        ax.text(0.5, 0.9, title, fontsize=14, ha='center', weight='bold')
+        y_pos = 0.8
+        for i, item in enumerate(diagram_data[:8]):
+            ax.text(0.5, y_pos - i*0.08, f"{i+1}. {item}", fontsize=10, ha='center')
+        img_buffer = io.BytesIO()
+        plt.savefig(img_buffer, format='png', dpi=100, bbox_inches='tight')
+        plt.close()
+        img_buffer.seek(0)
+        img = RLImage(img_buffer, width=6*inch, height=4*inch)
+        story.append(KeepTogether([img, Spacer(1, 10)]))
+    
+    def add_page_number(canvas, doc):
+        canvas.saveState()
+        canvas.setFont(MAIN_FONT, 8)
+        canvas.setFillColor(colors.grey)
+        canvas.drawCentredString(doc.width / 2 + doc.leftMargin, doc.bottomMargin - 20, f"Page {canvas.getPageNumber()}")
+        canvas.restoreState()
+    
+    doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
+    return buffer.getvalue()
+
 # ================= IMAGE GENERATION =================
 async def generate_image(prompt):
     try:
@@ -1000,9 +618,476 @@ async def analyze_image(path):
                     result += f"\n\n📝 **Text Found:**\n{text[:500]}"
             except:
                 pass
+            try:
+                faces = await luxand_api.detect_faces(path)
+                if faces and len(faces) > 0:
+                    result += f"\n\n👤 **Faces Detected:** {len(faces)}"
+            except:
+                pass
             return result
     except Exception as e:
         return f"❌ Error: {str(e)}"
+
+# ================= GAMES SECTION =================
+
+# Game states
+active_games: Dict[int, Dict] = {}
+
+# Hangman words and stages
+hangman_words = ["PYTHON", "PROGRAMMING", "COMPUTER", "TELEGRAM", "BOT", "DEVELOPER",
+    "ARTIFICIAL", "INTELLIGENCE", "MACHINE", "LEARNING", "DATABASE", "ALGORITHM", "CODING", "SOFTWARE"]
+
+hangman_stages = [
+    "       --------\n       |      |\n       |      \n       |    \n       |      \n       |     \n       -",
+    "       --------\n       |      |\n       |      O\n       |    \n       |      \n       |     \n       -",
+    "       --------\n       |      |\n       |      O\n       |      |\n       |      \n       |     \n       -",
+    "       --------\n       |      |\n       |      O\n       |     /|\n       |      \n       |     \n       -",
+    "       --------\n       |      |\n       |      O\n       |     /|\\\n       |      \n       |     \n       -",
+    "       --------\n       |      |\n       |      O\n       |     /|\\\n       |     /\n       |     \n       -",
+    "       --------\n       |      |\n       |      O\n       |     /|\\\n       |     / \\\n       |     \n       -"
+]
+
+# Quiz questions
+quiz_questions = {
+    'general': [
+        {'q': "What is the capital of France?", 'a': "Paris", 'options': ["London", "Berlin", "Paris", "Madrid"]},
+        {'q': "Which planet is known as the Red Planet?", 'a': "Mars", 'options': ["Venus", "Mars", "Jupiter", "Saturn"]},
+        {'q': "Who wrote 'Romeo and Juliet'?", 'a': "William Shakespeare", 'options': ["Charles Dickens", "Jane Austen", "William Shakespeare", "Mark Twain"]},
+        {'q': "What is the largest ocean on Earth?", 'a': "Pacific Ocean", 'options': ["Atlantic Ocean", "Indian Ocean", "Arctic Ocean", "Pacific Ocean"]},
+        {'q': "Which is the longest river in the world?", 'a': "Nile", 'options': ["Amazon", "Nile", "Yangtze", "Mississippi"]},
+    ],
+    'science': [
+        {'q': "What is H2O commonly known as?", 'a': "Water", 'options': ["Oxygen", "Hydrogen", "Water", "Salt"]},
+        {'q': "What is the hardest natural substance?", 'a': "Diamond", 'options': ["Gold", "Iron", "Diamond", "Platinum"]},
+        {'q': "Which organ pumps blood in the human body?", 'a': "Heart", 'options': ["Brain", "Liver", "Heart", "Kidney"]},
+    ],
+    'math': [
+        {'q': "What is 15 × 8?", 'a': "120", 'options': ["100", "110", "120", "130"]},
+        {'q': "What is the square root of 144?", 'a': "12", 'options': ["10", "11", "12", "13"]},
+        {'q': "What is 25% of 200?", 'a': "50", 'options': ["25", "50", "75", "100"]},
+    ]
+}
+
+# Trivia questions
+trivia_questions = [
+    {"question": "What is the fastest animal on land?", "answer": "Cheetah", "options": ["Lion", "Cheetah", "Leopard", "Tiger"]},
+    {"question": "Which country gifted the Statue of Liberty to the USA?", "answer": "France", "options": ["England", "Spain", "France", "Germany"]},
+    {"question": "Who painted the Mona Lisa?", "answer": "Leonardo da Vinci", "options": ["Van Gogh", "Picasso", "Leonardo da Vinci", "Rembrandt"]},
+    {"question": "What is the smallest country in the world?", "answer": "Vatican City", "options": ["Monaco", "San Marino", "Vatican City", "Malta"]},
+    {"question": "Which year did World War II end?", "answer": "1945", "options": ["1944", "1945", "1946", "1943"]},
+]
+
+# Fun facts
+fun_facts = [
+    "🐘 Elephants are the only mammals that can't jump!",
+    "🍌 Bananas are berries, but strawberries aren't!",
+    "🦒 A giraffe's tongue is 21 inches long!",
+    "🐙 Octopuses have three hearts!",
+    "🐧 Penguins can drink salt water!",
+    "🐌 Snails can sleep for 3 years!",
+    "🦩 Flamingos are born gray!",
+]
+
+# Jokes
+jokes = [
+    "Why don't scientists trust atoms?\nBecause they make up everything! 🤓",
+    "What do you call a fake noodle?\nAn impasta! 🍝",
+    "Why did the scarecrow win an award?\nHe was outstanding in his field! 🌾",
+    "What do you call a bear with no teeth?\nA gummy bear! 🐻",
+]
+
+# Quotes
+quotes = [
+    ("The only way to do great work is to love what you do.", "Steve Jobs"),
+    ("Success is not final, failure is not fatal: it is the courage to continue that counts.", "Winston Churchill"),
+    ("Believe you can and you're halfway there.", "Theodore Roosevelt"),
+]
+
+# ================= GAME HANDLERS =================
+
+async def guess_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    secret = random.randint(1, 100)
+    active_games[user_id] = {'type': 'guess', 'secret': secret, 'attempts': 0, 'max_attempts': 7}
+    await update.message.reply_text(
+        f"🎮 **Number Guessing Game!**\n\nI've selected a number between 1 and 100.\nYou have 7 attempts.\n\nType `/guess [number]` to play!",
+        parse_mode='Markdown')
+
+async def guess_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if user_id not in active_games or active_games[user_id].get('type') != 'guess':
+        await update.message.reply_text("❌ No active game! Start with `/game`", parse_mode='Markdown')
+        return
+    if not context.args:
+        await update.message.reply_text("❌ Usage: `/guess [number]`", parse_mode='Markdown')
+        return
+    try:
+        guess = int(context.args[0])
+    except:
+        await update.message.reply_text("❌ Please enter a valid number!", parse_mode='Markdown')
+        return
+    
+    game = active_games[user_id]
+    game['attempts'] += 1
+    
+    if guess == game['secret']:
+        points = 50 - (game['attempts'] * 2)
+        points = max(points, 10)
+        add_points(user_id, points)
+        update_game_stats(user_id, "Number Guessing", points)
+        await update.message.reply_text(f"🎉 **CORRECT!** The number was {game['secret']}\nAttempts: {game['attempts']}\n💰 Points earned: {points}", parse_mode='Markdown')
+        del active_games[user_id]
+    elif guess < game['secret']:
+        remaining = game['max_attempts'] - game['attempts']
+        msg = f"📈 **Too Low!**\nAttempts left: {remaining}"
+        if game['attempts'] >= game['max_attempts']:
+            msg += f"\n❌ **GAME OVER!** The number was {game['secret']}"
+            del active_games[user_id]
+        await update.message.reply_text(msg, parse_mode='Markdown')
+    else:
+        remaining = game['max_attempts'] - game['attempts']
+        msg = f"📉 **Too High!**\nAttempts left: {remaining}"
+        if game['attempts'] >= game['max_attempts']:
+            msg += f"\n❌ **GAME OVER!** The number was {game['secret']}"
+            del active_games[user_id]
+        await update.message.reply_text(msg, parse_mode='Markdown')
+
+async def quiz_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    category = context.args[0] if context.args and context.args[0] in quiz_questions else 'general'
+    questions = quiz_questions[category][:5]
+    user_id = update.message.from_user.id
+    active_games[user_id] = {'type': 'quiz', 'questions': questions, 'current': 0, 'score': 0, 'category': category}
+    await send_quiz_question(update, user_id)
+
+async def send_quiz_question(update: Update, user_id: int):
+    game = active_games.get(user_id)
+    if not game or game['current'] >= len(game['questions']):
+        total = len(game['questions']) if game else 0
+        score = game['score'] if game else 0
+        points = score * 10
+        add_points(user_id, points)
+        update_game_stats(user_id, "Quiz", score)
+        await update.message.reply_text(
+            f"🎉 **Quiz Completed!**\nScore: {score}/{total}\n💰 Points earned: {points}\n"
+            f"{'🏆 PERFECT SCORE!' if score == total else '👍 Good attempt!'}",
+            parse_mode='Markdown')
+        if user_id in active_games:
+            del active_games[user_id]
+        return
+    
+    q = game['questions'][game['current']]
+    keyboard = [[InlineKeyboardButton(opt, callback_data=f"quiz_{opt}_{user_id}")] for opt in q['options']]
+    await update.message.reply_text(
+        f"🎯 **Quiz Q{game['current']+1}/{len(game['questions'])}**\nCategory: {game['category'].upper()}\nScore: {game['score']}\n\n{q['q']}",
+        reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+async def quiz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+    if not data.startswith("quiz_"):
+        return
+    answer = data.split("_")[1]
+    user_id = int(data.split("_")[2])
+    if query.from_user.id != user_id:
+        await query.answer("❌ Not your game!", show_alert=True)
+        return
+    
+    game = active_games.get(user_id)
+    if not game or game['type'] != 'quiz':
+        await query.answer("❌ Game expired!", show_alert=True)
+        return
+    
+    current_q = game['questions'][game['current']]
+    if answer == current_q['a']:
+        game['score'] += 1
+        await query.answer("✅ Correct! +1 point", show_alert=True)
+    else:
+        await query.answer(f"❌ Wrong! Answer: {current_q['a']}", show_alert=True)
+    
+    game['current'] += 1
+    await query.message.delete()
+    await send_quiz_question(update, user_id)
+
+async def hangman(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    word = random.choice(hangman_words)
+    user_id = update.message.from_user.id
+    active_games[user_id] = {'type': 'hangman', 'word': word, 'guessed': set(), 'wrong': 0, 'max_wrong': 6}
+    await display_hangman(update, user_id)
+
+async def display_hangman(update: Update, user_id: int):
+    game = active_games[user_id]
+    display = " ".join([l if l in game['guessed'] else "_" for l in game['word']])
+    
+    keyboard = []
+    row = []
+    for i, letter in enumerate("ABCDEFGHIJKLMNOPQRSTUVWXYZ"):
+        row.append(InlineKeyboardButton(letter, callback_data=f"hang_{letter}_{user_id}"))
+        if len(row) == 7:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    keyboard.append([InlineKeyboardButton("🔄 New Game", callback_data="hang_new")])
+    
+    await update.message.reply_text(
+        f"🎮 **HANGMAN**\n{hangman_stages[game['wrong']]}\n\n📖 Word: {display}\n❌ Wrong: {game['wrong']}/{game['max_wrong']}\n🔤 Guessed: {', '.join(sorted(game['guessed']))}",
+        reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Monospace')
+
+async def hangman_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+    user_id = query.from_user.id
+    
+    if data == "hang_new":
+        word = random.choice(hangman_words)
+        active_games[user_id] = {'type': 'hangman', 'word': word, 'guessed': set(), 'wrong': 0, 'max_wrong': 6}
+        await query.message.delete()
+        await display_hangman(update, user_id)
+        await query.answer()
+        return
+    
+    if data.startswith("hang_"):
+        letter = data.split("_")[1]
+        game_user_id = int(data.split("_")[2])
+        if user_id != game_user_id:
+            await query.answer("❌ Not your game!", show_alert=True)
+            return
+        if user_id not in active_games:
+            await query.answer("❌ No active game!", show_alert=True)
+            return
+        
+        game = active_games[user_id]
+        if letter in game['guessed']:
+            await query.answer("Already guessed!", show_alert=True)
+            return
+        
+        game['guessed'].add(letter)
+        if letter not in game['word']:
+            game['wrong'] += 1
+        
+        if all(l in game['guessed'] for l in game['word']):
+            points = 100 - (game['wrong'] * 5)
+            add_points(user_id, points)
+            update_game_stats(user_id, "Hangman", points)
+            await query.message.delete()
+            await query.message.reply_text(f"🎉 **YOU WIN!** Word: {game['word']}\n💰 Points: {points}\nPlay again: `/hangman`", parse_mode='Markdown')
+            del active_games[user_id]
+        elif game['wrong'] >= game['max_wrong']:
+            await query.message.delete()
+            await query.message.reply_text(f"💀 **GAME OVER!** Word was: {game['word']}\nPlay again: `/hangman`", parse_mode='Markdown')
+            del active_games[user_id]
+        else:
+            await query.message.delete()
+            await display_hangman(update, user_id)
+        await query.answer()
+
+async def trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    question = random.choice(trivia_questions)
+    active_games[user_id] = {'type': 'trivia', 'question': question, 'answered': False}
+    keyboard = [[InlineKeyboardButton(opt, callback_data=f"triv_{opt}_{user_id}")] for opt in question['options']]
+    await update.message.reply_text(f"🧠 **TRIVIA**\n\n{question['question']}", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+async def trivia_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+    if not data.startswith("triv_"):
+        return
+    answer = data.split("_")[1]
+    user_id = int(data.split("_")[2])
+    if query.from_user.id != user_id:
+        await query.answer("❌ Not your game!", show_alert=True)
+        return
+    
+    game = active_games.get(user_id)
+    if not game or game.get('answered'):
+        await query.answer("❌ Game expired!", show_alert=True)
+        return
+    
+    game['answered'] = True
+    if answer == game['question']['answer']:
+        add_points(user_id, 20)
+        update_game_stats(user_id, "Trivia", 20)
+        await query.edit_message_text(f"✅ **CORRECT!**\nAnswer: {answer}\n💰 +20 points!", parse_mode='Markdown')
+    else:
+        await query.edit_message_text(f"❌ **WRONG!**\nAnswer: {game['question']['answer']}\nTry again: `/trivia`", parse_mode='Markdown')
+    del active_games[user_id]
+    await query.answer()
+
+async def tictactoe(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    active_games[user_id] = {'type': 'ttt', 'board': [' ']*9, 'current': 'X', 'winner': None}
+    await display_ttt(update, user_id)
+
+async def display_ttt(update: Update, user_id: int):
+    game = active_games[user_id]
+    keyboard = []
+    for i in range(0, 9, 3):
+        row = [InlineKeyboardButton(game['board'][i+j] if game['board'][i+j] != ' ' else '⬜', callback_data=f"ttt_{i+j}_{user_id}") for j in range(3)]
+        keyboard.append(row)
+    keyboard.append([InlineKeyboardButton("🔄 New Game", callback_data="ttt_new")])
+    
+    status = "🎉 YOU WIN!" if game['winner'] == 'X' else "🤖 AI WINS!" if game['winner'] == 'O' else "🤝 DRAW!" if game['winner'] == 'DRAW' else f"Your turn ({game['current']})"
+    await update.message.reply_text(f"🎯 **TIC TAC TOE**\n\n{status}", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+async def ttt_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+    user_id = query.from_user.id
+    
+    if data == "ttt_new":
+        active_games[user_id] = {'type': 'ttt', 'board': [' ']*9, 'current': 'X', 'winner': None}
+        await query.message.delete()
+        await display_ttt(update, user_id)
+        await query.answer()
+        return
+    
+    if data.startswith("ttt_"):
+        pos = int(data.split("_")[1])
+        game_user_id = int(data.split("_")[2])
+        if user_id != game_user_id:
+            await query.answer("❌ Not your game!", show_alert=True)
+            return
+        if user_id not in active_games:
+            await query.answer("❌ No active game!", show_alert=True)
+            return
+        
+        game = active_games[user_id]
+        if game['winner'] or game['board'][pos] != ' ':
+            await query.answer("❌ Invalid move!", show_alert=True)
+            return
+        
+        game['board'][pos] = 'X'
+        
+        win_patterns = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]]
+        def check_win(b):
+            for p in win_patterns:
+                if b[p[0]] == b[p[1]] == b[p[2]] != ' ':
+                    return b[p[0]]
+            return None
+        
+        winner = check_win(game['board'])
+        if winner:
+            game['winner'] = winner
+            if winner == 'X':
+                add_points(user_id, 50)
+                update_game_stats(user_id, "TicTacToe", 50)
+        elif ' ' not in game['board']:
+            game['winner'] = 'DRAW'
+        else:
+            empty = [i for i, cell in enumerate(game['board']) if cell == ' ']
+            if empty:
+                ai_move = random.choice(empty)
+                game['board'][ai_move] = 'O'
+                winner = check_win(game['board'])
+                if winner:
+                    game['winner'] = winner
+                elif ' ' not in game['board']:
+                    game['winner'] = 'DRAW'
+        
+        await query.message.delete()
+        await display_ttt(update, user_id)
+        await query.answer()
+
+async def dice_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_roll = random.randint(1, 6)
+    bot_roll = random.randint(1, 6)
+    dice = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"]
+    
+    if user_roll > bot_roll:
+        points = 20
+        add_points(update.message.from_user.id, points)
+        update_game_stats(update.message.from_user.id, "Dice", points)
+        result = f"🎉 YOU WIN! +{points} points"
+    elif bot_roll > user_roll:
+        result = "🤖 BOT WINS!"
+    else:
+        result = "🤝 DRAW!"
+    
+    await update.message.reply_text(
+        f"🎲 **DICE GAME**\n\nYou: {dice[user_roll-1]} {user_roll}\nBot: {dice[bot_roll-1]} {bot_roll}\n\n{result}",
+        parse_mode='Markdown')
+
+# ================= ENTERTAINMENT HANDLERS =================
+
+async def meme(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        response = requests.get("https://meme-api.com/gimme")
+        if response.status_code == 200:
+            data = response.json()
+            meme_response = requests.get(data['url'])
+            if meme_response.status_code == 200:
+                await update.message.reply_photo(photo=io.BytesIO(meme_response.content), caption=f"😂 **{data['title']}**\n👍 {data.get('ups', 'N/A')}")
+            else:
+                await update.message.reply_text("❌ Couldn't fetch meme!")
+        else:
+            await update.message.reply_text("❌ Meme API error!")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+async def joke(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(f"😂 **Joke**\n\n{random.choice(jokes)}", parse_mode='Markdown')
+
+async def funfact(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(f"📚 **Fun Fact**\n\n{random.choice(fun_facts)}", parse_mode='Markdown')
+
+async def quote(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q, a = random.choice(quotes)
+    await update.message.reply_text(f"💭 **Quote**\n\n\"{q}\"\n\n— {a}", parse_mode='Markdown')
+
+async def weather(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("🌤️ Usage: `/weather [city]`\nExample: `/weather Mumbai`", parse_mode='Markdown')
+        return
+    city = " ".join(context.args)
+    msg = await update.message.reply_text(f"🌤️ Fetching weather for {city}...")
+    try:
+        response = requests.get(f"https://wttr.in/{city}?format=%C|%t|%w|%h")
+        if response.status_code == 200:
+            data = response.text.strip().split('|')
+            await msg.edit_text(f"🌍 **Weather: {city.upper()}**\n\n☁️ {data[0]}\n🌡️ {data[1]}\n💨 {data[2]}\n💧 {data[3]}", parse_mode='Markdown')
+        else:
+            await msg.edit_text(f"❌ City '{city}' not found!")
+    except Exception as e:
+        await msg.edit_text(f"❌ Error: {str(e)}")
+
+async def daily_reward(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    today = datetime.now().strftime("%Y-%m-%d")
+    conn, cursor = ensure_connection()
+    cursor.execute("SELECT last_daily_claim, daily_streak FROM user_scores WHERE user_id = ?", (user_id,))
+    result = cursor.fetchone()
+    
+    if result and result[0] == today:
+        await update.message.reply_text("⏰ Already claimed today! Come back tomorrow!", parse_mode='Markdown')
+        return
+    
+    points = random.randint(50, 200)
+    streak = (result[1] + 1) if result else 1
+    if result and result[0] and (datetime.now() - datetime.strptime(result[0], "%Y-%m-%d")).days > 1:
+        streak = 1
+    
+    cursor.execute("UPDATE user_scores SET total_points = total_points + ?, daily_streak = ?, last_daily_claim = ? WHERE user_id = ?",
+                  (points, streak, today, user_id))
+    conn.commit()
+    
+    await update.message.reply_text(
+        f"🎁 **Daily Reward!**\n\n💰 +{points} points\n🔥 Streak: {streak} day(s)\n\nCome back tomorrow!",
+        parse_mode='Markdown')
+
+async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    conn, cursor = ensure_connection()
+    cursor.execute("SELECT u.first_name, s.total_points, s.games_won, s.quizzes_passed FROM user_scores s JOIN users u ON s.user_id = u.id WHERE s.total_points > 0 ORDER BY s.total_points DESC LIMIT 10")
+    top = cursor.fetchall()
+    if not top:
+        await update.message.reply_text("📊 No points yet! Play games to earn points!", parse_mode='Markdown')
+        return
+    
+    text = "🏆 **LEADERBOARD** 🏆\n\n"
+    for i, (name, points, games, quizzes) in enumerate(top, 1):
+        medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else "📌"
+        text += f"{medal} {name} - {points} pts (🎮{games} | 📚{quizzes})\n"
+    await update.message.reply_text(text, parse_mode='Markdown')
 
 # ================= REMINDER SYSTEM =================
 reminder_queue = queue.Queue()
@@ -1012,7 +1097,7 @@ def reminder_worker():
         try:
             conn, cursor = get_db()
             current_time = datetime.now()
-            cursor.execute("SELECT id, user_id, reminder_text, reminder_time FROM reminders WHERE status = 'pending' AND datetime(reminder_time) <= datetime(?)", 
+            cursor.execute("SELECT id, user_id, reminder_text FROM reminders WHERE status = 'pending' AND datetime(reminder_time) <= datetime(?)", 
                           (current_time.strftime("%Y-%m-%d %H:%M:%S"),))
             due_reminders = cursor.fetchall()
             for reminder in due_reminders:
@@ -1041,7 +1126,20 @@ def parse_reminder_time(time_str):
     except:
         return None
 
+async def check_reminders(context: ContextTypes.DEFAULT_TYPE):
+    try:
+        while not reminder_queue.empty():
+            reminder = reminder_queue.get_nowait()
+            rid, uid, msg = reminder
+            try:
+                await context.bot.send_message(chat_id=uid, text=f"⏰ **REMINDER!**\n\n{msg}", parse_mode='Markdown')
+            except:
+                pass
+    except:
+        pass
+
 # ================= COMMAND HANDLERS =================
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     add_user(user.id, user.username, user.first_name, user.last_name)
@@ -1051,73 +1149,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 Main aapka advanced AI assistant **Study Controller** hoon.
 
-📚 **STUDY FEATURES**
-• /notes [topic] - Notes banayein
-• /explain [topic] - Samjhao koi bhi topic
-• /mcq [topic] - MCQ generate karein
-• /pyq [subject] - Previous year questions
-• /doubt [question] - Doubt solve karein
-• /quiz [topic] [q] - Interactive quiz
-
-📄 **PDF & DIAGRAM FEATURES**
-• /pdf [topic] - High-quality PDF with diagram
-• /pdfnotes [topic] - Simple PDF notes
-• /pdfdiagram [topic] - PDF with visual diagram
-
-🎨 **CREATIVE FEATURES**
-• /imagine [prompt] - AI image generate
-• /draw [prompt] - Enhanced prompt
-• .gen [prompt] - Quick image
-• /voice [text] - Text to voice
-• /analyze - Image analyze
-
-📝 **NOTE TAKING**
-• /addnote [title] [content] - Note save
-• /mynotes - Notes list
-• /editnote [id] [content] - Note edit
-• /deletenote [id] - Note delete
-
-🃏 **FLASHCARDS**
-• /addcard [q] [a] - Flashcard add
-• /mycards - All flashcards
-• /study - Study flashcards
-
-⏰ **REMINDER COMMANDS**
-• /remind [time] [message] - Set reminder
-• /myreminders - View reminders
-• /cancel [id] - Cancel reminder
-• /clearreminders - Clear all
-
-📝 **FEEDBACK & SUPPORT**
-• /feedback [message] - Give feedback
-• /complaint [message] - File complaint
-• /complaintstatus [id] - Check complaint status
-
-📊 **STATS**
-• /daily - Check daily usage
-• /stats - Your statistics
-• /help - All commands
-
-**Bas mujhe tag karo ya reply karo!** 🚀
-"""
-    
-    keyboard = [
-        [InlineKeyboardButton("📚 Study", callback_data="study_help"),
-         InlineKeyboardButton("📄 PDF", callback_data="pdf_help")],
-        [InlineKeyboardButton("🎨 Creative", callback_data="creative"),
-         InlineKeyboardButton("📝 Notes", callback_data="notes_menu")],
-        [InlineKeyboardButton("🃏 Flashcards", callback_data="flashcards_menu"),
-         InlineKeyboardButton("⏰ Reminders", callback_data="reminders")],
-        [InlineKeyboardButton("⚙️ Settings", callback_data="settings"),
-         InlineKeyboardButton("📊 Stats", callback_data="stats")]
-    ]
-    await update.message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = """
-🌟 **ALL COMMANDS** 🌟
-
-**📚 STUDY COMMANDS**
+📚 **STUDY COMMANDS**
 /notes [topic] - Detailed notes
 /explain [topic] - Simple explanation
 /mcq [topic] - Multiple choice questions
@@ -1125,206 +1157,176 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /doubt [question] - Solve doubts
 /quiz [topic] [q] - Interactive quiz
 
-**📄 PDF COMMANDS**
-/pdf [topic] - Complete PDF with professional formatting and diagram
+📄 **PDF COMMANDS**
+/pdf [topic] - Complete PDF with diagram
 /pdfnotes [topic] - Simple PDF notes
 /pdfdiagram [topic] - PDF with visual diagram
 
-**🎨 CREATIVE COMMANDS**
-/imagine [prompt] - AI image generation
-/draw [prompt] - Enhanced prompt
-/voice [text] - Text to speech
-.gen [prompt] - Quick generate
-/analyze - Analyze replied image
+🎮 **GAMES & ENTERTAINMENT**
+/game - Number guessing game
+/quizgame - Quiz competition
+/hangman - Word guessing game
+/trivia - Random trivia
+/tictactoe - Play Tic Tac Toe
+/dice - Roll dice game
+/meme - Random memes
+/joke - Funny jokes
+/fact - Interesting facts
+/quote - Inspirational quotes
 
-**📝 NOTE COMMANDS**
-/addnote [title] [content] - Add note
-/mynotes - View all notes
-/editnote [id] [content] - Edit note
-/deletenote [id] - Delete note
+🎨 **CREATIVE COMMANDS**
+/imagine [prompt] - AI image generate
+/voice [text] - Text to voice
+/analyze - Image analyze
 
-**🃏 FLASHCARD COMMANDS**
+📝 **NOTE & FLASHCARD**
+/addnote [title] [content] - Save note
+/mynotes - View notes
 /addcard [q] [a] - Add flashcard
-/mycards - View flashcards
 /study - Study flashcards
 
-**⏰ REMINDER COMMANDS**
-/remind [time] [message] - Set reminder
+⏰ **REMINDERS**
+/remind [time] [msg] - Set reminder
 /myreminders - View reminders
-/cancel [id] - Cancel reminder
-/clearreminders - Clear all
 
-**📝 FEEDBACK & COMPLAINTS**
-/feedback [message] - Give feedback
-/complaint [message] - File complaint
-/complaintstatus [id] - Check status
+💰 **REWARDS**
+/daily - Claim daily reward
+/leaderboard - Top players
+/points - Your points
 
-**📊 STATS**
-/daily - Check daily usage
-/stats - Your statistics
-/help - This menu
+🌤️ **UTILITIES**
+/weather [city] - Weather forecast
 
-**👑 OWNER COMMANDS**
-/users - All users list
-/broadcast [message] - Broadcast to all
-/groupbroadcast [message] - Broadcast to groups
-/addgroup - Add current group
-/removegroup [id] - Remove group
-/statsall - Overall bot stats
-/feedbacklist - View all feedback
-/complaintslist - View all complaints
-/resolve [id] - Resolve complaint
-/block [user_id] - Block user
-/unblock [user_id] - Unblock user
+📝 **FEEDBACK**
+/feedback [msg] - Give feedback
+/complaint [msg] - File complaint
+
+**Bas mujhe tag karo ya reply karo!** 🚀
+"""
+    
+    keyboard = [
+        [InlineKeyboardButton("📚 Study", callback_data="study"), InlineKeyboardButton("🎮 Games", callback_data="games")],
+        [InlineKeyboardButton("📄 PDF", callback_data="pdf"), InlineKeyboardButton("💰 Rewards", callback_data="rewards")],
+        [InlineKeyboardButton("🎨 Creative", callback_data="creative"), InlineKeyboardButton("⚙️ Settings", callback_data="settings")],
+        [InlineKeyboardButton("📊 Stats", callback_data="stats")]
+    ]
+    await update.message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = """
+🌟 **COMPLETE COMMANDS LIST** 🌟
+
+📚 **STUDY**
+/notes [topic] - Notes
+/explain [topic] - Explanation
+/mcq [topic] - MCQs
+/pyq [subject] - PYQs
+/doubt [q] - Doubt solve
+/quiz [topic] [q] - Quiz
+
+📄 **PDF**
+/pdf [topic] - Complete PDF
+/pdfnotes [topic] - Simple PDF
+/pdfdiagram [topic] - PDF with diagram
+
+🎮 **GAMES**
+/game - Guess number
+/quizgame - Quiz game
+/hangman - Hangman
+/trivia - Trivia
+/tictactoe - Tic Tac Toe
+/dice - Dice game
+
+🎨 **CREATIVE**
+/imagine [prompt] - AI image
+/voice [text] - Text to speech
+/analyze - Image analysis
+
+💰 **REWARDS**
+/daily - Daily reward
+/leaderboard - Top players
+/points - Your points
+
+🌤️ **UTILITIES**
+/weather [city] - Weather
+/remind [time] [msg] - Reminder
+/myreminders - View reminders
+
+📝 **NOTES & CARDS**
+/addnote [title] [content]
+/mynotes
+/addcard [q] [a]
+/study
+
+🎉 **ENTERTAINMENT**
+/meme - Random meme
+/joke - Funny joke
+/fact - Fun fact
+/quote - Quote
+
+📝 **FEEDBACK**
+/feedback [msg]
+/complaint [msg]
+/complaintstatus [id]
 """
     await update.message.reply_text(text, parse_mode='Markdown')
 
+async def points(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    points, games, quizzes, streak = get_user_points(update.message.from_user.id)
+    await update.message.reply_text(
+        f"💰 **Your Points**\n\n⭐ Total: {points}\n🎮 Games Won: {games}\n📚 Quizzes: {quizzes}\n🔥 Streak: {streak} days\n\nPlay games to earn more points!",
+        parse_mode='Markdown')
+
 # ================= PDF COMMANDS =================
+
 async def pdf_full(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Generate complete PDF with professional formatting and diagram"""
     if not context.args:
-        await update.message.reply_text(
-            "📚 **Complete PDF with Diagram**\n\n"
-            "**Usage:** `/pdf [topic]`\n"
-            "**Example:** `/pdf photosynthesis`\n\n"
-            "✨ **Features:**\n"
-            "• Professional formatting with headings\n"
-            "• Bullet points and numbered lists\n"
-            "• Automatic diagram generation\n"
-            "• Page numbers and metadata\n"
-            "• High-quality text rendering\n"
-            "• Visual representation of concepts",
-            parse_mode='Markdown'
-        )
+        await update.message.reply_text("📚 Usage: `/pdf [topic]`\nExample: `/pdf photosynthesis`", parse_mode='Markdown')
         return
-    
     topic = " ".join(context.args)
-    msg = await update.message.reply_text(f"📚 Generating professional PDF for **{topic}**...\n⏳ Creating content and diagram...", parse_mode='Markdown')
-    
-    try:
-        user_id = update.message.from_user.id
-        
-        # Generate content
-        content_prompt = f"""Create detailed study notes for {topic} in Hinglish.
-        
-Format the notes with:
-- **Main Title** as heading
-- ## Subheadings for sections
-- • Bullet points for key points
-- Numbered steps for processes
-- Clear explanations and examples
-
-Make it comprehensive and well-structured."""
-        
-        content = await ask_ai_hinglish(user_id, content_prompt)
-        
-        # Generate diagram data
-        diagram_prompt = f"List the main steps, parts, or concepts of {topic} in simple bullet points (max 12 items)"
-        diagram_response = await ask_ai_hinglish(user_id, diagram_prompt)
-        
-        diagram_data = []
-        for line in diagram_response.split('\n'):
-            line = line.strip()
-            if line and (line.startswith('•') or line.startswith('-') or line.startswith('*') or line[0].isdigit()):
-                clean_line = line.lstrip('•-*0123456789. ').strip()
-                if clean_line:
-                    diagram_data.append(clean_line)
-        
-        if not diagram_data:
-            diagram_data = [f"Main concept {i+1}" for i in range(6)]
-        
-        # Determine diagram type based on topic
-        if any(word in topic.lower() for word in ['process', 'steps', 'procedure', 'method']):
-            diagram_type = 'flowchart'
-        elif any(word in topic.lower() for word in ['history', 'timeline', 'events']):
-            diagram_type = 'timeline'
-        elif any(word in topic.lower() for word in ['table', 'comparison', 'list']):
-            diagram_type = 'table'
-        else:
-            diagram_type = 'mindmap'
-        
-        # Generate PDF
-        pdf_bytes = generate_complete_pdf(f"Study Notes: {topic.title()}", content, True, diagram_type, diagram_data)
-        
-        # Send PDF
-        await update.message.reply_document(
-            document=io.BytesIO(pdf_bytes),
-            filename=f"{topic.replace(' ', '_')}_complete_notes.pdf",
-            caption=f"📚 **{topic.upper()}**\n\n✅ Professional PDF generated!\n📊 Includes: {diagram_type.upper()} diagram\n✨ High-quality formatting with headings, bullet points, and visual elements"
-        )
-        
-        await msg.delete()
-        
-    except Exception as e:
-        logger.error(f"PDF generation error: {e}")
-        await msg.edit_text(f"❌ Error: {str(e)[:200]}\n\nPlease try again with a simpler topic.")
-
-async def pdf_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Generate simple PDF notes without diagram"""
-    if not context.args:
-        await update.message.reply_text("📚 **PDF Notes**\n\nUsage: `/pdfnotes [topic]`", parse_mode='Markdown')
-        return
-    
-    topic = " ".join(context.args)
-    msg = await update.message.reply_text(f"📚 Generating PDF notes for **{topic}**...", parse_mode='Markdown')
-    
+    msg = await update.message.reply_text(f"📚 Generating PDF for **{topic}**...", parse_mode='Markdown')
     try:
         user_id = update.message.from_user.id
         content = await ask_ai_hinglish(user_id, f"Create detailed study notes for {topic} in Hinglish with headings and bullet points")
-        
-        pdf_bytes = generate_complete_pdf(f"Study Notes: {topic.title()}", content, False, None, None)
-        
-        await update.message.reply_document(
-            document=io.BytesIO(pdf_bytes),
-            filename=f"{topic.replace(' ', '_')}_notes.pdf",
-            caption=f"📚 **{topic.upper()}**\n\n✅ PDF notes generated!"
-        )
+        diagram_data = [f"Main concept {i+1}" for i in range(6)]
+        pdf_bytes = generate_complete_pdf(f"Study Notes: {topic.title()}", content, True, 'mindmap', diagram_data)
+        await update.message.reply_document(document=io.BytesIO(pdf_bytes), filename=f"{topic.replace(' ', '_')}_notes.pdf", caption=f"✅ PDF for {topic} generated!")
         await msg.delete()
-        
     except Exception as e:
-        logger.error(f"PDF error: {e}")
+        await msg.edit_text(f"❌ Error: {str(e)[:100]}")
+
+async def pdf_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("📚 Usage: `/pdfnotes [topic]`", parse_mode='Markdown')
+        return
+    topic = " ".join(context.args)
+    msg = await update.message.reply_text(f"📚 Generating PDF notes...", parse_mode='Markdown')
+    try:
+        user_id = update.message.from_user.id
+        content = await ask_ai_hinglish(user_id, f"Create detailed study notes for {topic}")
+        pdf_bytes = generate_complete_pdf(f"Notes: {topic.title()}", content, False, None, None)
+        await update.message.reply_document(document=io.BytesIO(pdf_bytes), filename=f"{topic.replace(' ', '_')}_notes.pdf")
+        await msg.delete()
+    except Exception as e:
         await msg.edit_text(f"❌ Error: {str(e)[:100]}")
 
 async def pdf_diagram(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Generate PDF with diagram"""
     if not context.args:
-        await update.message.reply_text("📊 **PDF with Diagram**\n\nUsage: `/pdfdiagram [topic]`", parse_mode='Markdown')
+        await update.message.reply_text("📊 Usage: `/pdfdiagram [topic]`", parse_mode='Markdown')
         return
-    
     topic = " ".join(context.args)
-    msg = await update.message.reply_text(f"🎨 Creating PDF with diagram for **{topic}**...", parse_mode='Markdown')
-    
+    msg = await update.message.reply_text(f"🎨 Generating PDF with diagram...", parse_mode='Markdown')
     try:
         user_id = update.message.from_user.id
-        content = await ask_ai_hinglish(user_id, f"Create detailed study notes for {topic} in Hinglish")
-        
-        # Generate diagram data
-        diagram_prompt = f"List the main steps or parts of {topic} in simple bullet points (max 10 items)"
-        diagram_response = await ask_ai_hinglish(user_id, diagram_prompt)
-        
-        diagram_data = []
-        for line in diagram_response.split('\n'):
-            line = line.strip()
-            if line and (line.startswith('•') or line.startswith('-') or line.startswith('*')):
-                diagram_data.append(line.lstrip('•-* ').strip())
-        
-        if not diagram_data:
-            diagram_data = [f"Concept {i+1}" for i in range(6)]
-        
-        pdf_bytes = generate_complete_pdf(f"Study Notes: {topic.title()}", content, True, 'mindmap', diagram_data)
-        
-        await update.message.reply_document(
-            document=io.BytesIO(pdf_bytes),
-            filename=f"{topic.replace(' ', '_')}_diagram.pdf",
-            caption=f"📊 **{topic.upper()}**\n\n✅ PDF with diagram included!"
-        )
+        content = await ask_ai_hinglish(user_id, f"Create study notes for {topic}")
+        pdf_bytes = generate_complete_pdf(f"Diagram: {topic.title()}", content, True, 'mindmap', [f"Point {i+1}" for i in range(6)])
+        await update.message.reply_document(document=io.BytesIO(pdf_bytes), filename=f"{topic.replace(' ', '_')}_diagram.pdf")
         await msg.delete()
-        
     except Exception as e:
-        logger.error(f"Diagram PDF error: {e}")
         await msg.edit_text(f"❌ Error: {str(e)[:100]}")
 
 # ================= STUDY COMMANDS =================
+
 async def notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("❌ Usage: `/notes [topic]`", parse_mode='Markdown')
@@ -1348,17 +1350,8 @@ async def mcq(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Usage: `/mcq [topic]`", parse_mode='Markdown')
         return
     topic = " ".join(context.args)
-    msg = await update.message.reply_text(f"📝 Generating MCQs for **{topic}**...", parse_mode='Markdown')
+    msg = await update.message.reply_text(f"📝 Generating MCQs...", parse_mode='Markdown')
     reply = await ask_ai_hinglish(update.message.from_user.id, f"Create 10 multiple choice questions for {topic} with answers")
-    await msg.edit_text(reply)
-
-async def pyq(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("❌ Usage: `/pyq [subject]`", parse_mode='Markdown')
-        return
-    subject = " ".join(context.args)
-    msg = await update.message.reply_text(f"📚 Finding PYQs for **{subject}**...", parse_mode='Markdown')
-    reply = await ask_ai_hinglish(update.message.from_user.id, f"Generate important previous year questions for {subject}")
     await msg.edit_text(reply)
 
 async def doubt(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1370,20 +1363,8 @@ async def doubt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply = await ask_ai_hinglish(update.message.from_user.id, f"Solve this doubt: {question}")
     await msg.edit_text(reply)
 
-async def quiz_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if len(context.args) < 2:
-        await update.message.reply_text("❌ Usage: `/quiz [topic] [questions]`", parse_mode='Markdown')
-        return
-    topic = context.args[0]
-    try:
-        num = min(int(context.args[1]), 20)
-    except:
-        num = 5
-    msg = await update.message.reply_text(f"📝 Generating {num} MCQs...", parse_mode='Markdown')
-    reply = await ask_ai_hinglish(update.message.from_user.id, f"Generate {num} multiple choice questions for {topic}")
-    await msg.edit_text(reply)
-
 # ================= CREATIVE COMMANDS =================
+
 async def imagine(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("❌ Usage: `/imagine [prompt]`", parse_mode='Markdown')
@@ -1398,29 +1379,6 @@ async def imagine(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.delete()
     else:
         await msg.edit_text("❌ Failed to generate image.")
-
-async def draw(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("❌ Usage: `/draw [prompt]`", parse_mode='Markdown')
-        return
-    prompt = " ".join(context.args)
-    enhanced = f"Ultra detailed {prompt}, cinematic lighting, 8k resolution"
-    await update.message.reply_text(f"✨ **Enhanced Prompt:**\n\n`{enhanced}`", parse_mode='Markdown')
-
-async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("❌ Usage: `/generate [prompt]`", parse_mode='Markdown')
-        return
-    prompt = " ".join(context.args)
-    msg = await update.message.reply_text("🎨 Generating image...")
-    filename = await generate_image(prompt)
-    if filename:
-        with open(filename, "rb") as f:
-            await update.message.reply_photo(photo=f, caption=f"🖼️ {prompt}")
-        os.remove(filename)
-        await msg.delete()
-    else:
-        await msg.edit_text("❌ Generation failed.")
 
 async def voice_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
@@ -1438,19 +1396,10 @@ async def voice_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
-async def enhance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("❌ Usage: `/enhance [prompt]`", parse_mode='Markdown')
-        return
-    prompt = " ".join(context.args)
-    enhanced = f"Ultra detailed {prompt}, cinematic lighting, 8k resolution"
-    await update.message.reply_text(f"✨ **Enhanced Prompt:**\n\n`{enhanced}`", parse_mode='Markdown')
-
 async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message or not update.message.reply_to_message.photo:
         await update.message.reply_text("❌ Reply to an image with `/analyze`", parse_mode='Markdown')
         return
-    
     msg = await update.message.reply_text("🔍 Analyzing...")
     photo = await update.message.reply_to_message.photo[-1].get_file()
     path = f"temp_{uuid.uuid4().hex[:6]}.jpg"
@@ -1461,11 +1410,11 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         os.remove(path)
 
 # ================= NOTE COMMANDS =================
+
 async def add_note_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 2:
         await update.message.reply_text("❌ Usage: `/addnote [title] [content]`", parse_mode='Markdown')
         return
-    
     title = context.args[0]
     content = " ".join(context.args[1:])
     note_id = add_note(update.message.from_user.id, title, content)
@@ -1475,29 +1424,14 @@ async def add_note_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Failed to save note.")
 
 async def my_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    notes = get_notes(update.message.from_user.id)
-    if not notes:
+    notes_list = get_notes(update.message.from_user.id)
+    if not notes_list:
         await update.message.reply_text("📭 No notes found.", parse_mode='Markdown')
         return
-    
     text = "📝 **Your Notes:**\n\n"
-    for note in notes[:10]:
+    for note in notes_list[:10]:
         text += f"🆔 `{note[0]}` • **{note[1]}**\n📄 {note[2][:100]}...\n📅 {note[3]}\n\n"
     await update.message.reply_text(text, parse_mode='Markdown')
-
-async def edit_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if len(context.args) < 2:
-        await update.message.reply_text("❌ Usage: `/editnote [id] [content]`", parse_mode='Markdown')
-        return
-    try:
-        note_id = int(context.args[0])
-        content = " ".join(context.args[1:])
-        if update_note(note_id, content):
-            await update.message.reply_text(f"✅ Note `{note_id}` updated!", parse_mode='Markdown')
-        else:
-            await update.message.reply_text("❌ Note not found!")
-    except:
-        await update.message.reply_text("❌ Invalid ID!")
 
 async def delete_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
@@ -1513,11 +1447,11 @@ async def delete_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Invalid ID!")
 
 # ================= FLASHCARD COMMANDS =================
+
 async def add_flashcard_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 2:
         await update.message.reply_text("❌ Usage: `/addcard [question] [answer]`", parse_mode='Markdown')
         return
-    
     question = context.args[0]
     answer = " ".join(context.args[1:])
     card_id = add_flashcard(update.message.from_user.id, question, answer)
@@ -1531,7 +1465,6 @@ async def my_flashcards(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not cards:
         await update.message.reply_text("📭 No flashcards found.", parse_mode='Markdown')
         return
-    
     text = "🃏 **Your Flashcards:**\n\n"
     for card in cards:
         text += f"🆔 `{card[0]}` • {card[1][:50]}\n💡 {card[2][:50]}...\n\n"
@@ -1542,79 +1475,52 @@ async def study_flashcards(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not cards:
         await update.message.reply_text("📭 No flashcards to study.", parse_mode='Markdown')
         return
-    
     context.user_data['flashcards'] = cards
     context.user_data['current_card'] = 0
-    
     card = cards[0]
-    keyboard = [[InlineKeyboardButton("💡 Show Answer", callback_data=f"show_answer_{card[0]}")]]
+    keyboard = [[InlineKeyboardButton("💡 Show Answer", callback_data=f"show_{card[0]}")]]
     await update.message.reply_text(f"🃏 **Flashcard 1/{len(cards)}**\n\n❓ {card[1]}", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
 # ================= REMINDER COMMANDS =================
+
 async def remind(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 2:
-        await update.message.reply_text("⏰ **Set Reminder**\n\nExamples:\n• `/remind 10m Study`\n• `/remind 2h Submit`\n• `/remind 1d Water plants`", parse_mode='Markdown')
+        await update.message.reply_text("⏰ **Set Reminder**\nExamples:\n• `/remind 10m Study`\n• `/remind 2h Submit`\n• `/remind 1d Water plants`", parse_mode='Markdown')
         return
-    
     time_str = context.args[0].lower()
     message = " ".join(context.args[1:])
     reminder_time = parse_reminder_time(time_str)
-    
     if not reminder_time:
         await update.message.reply_text("❌ Invalid time! Use: 10m, 2h, 1d")
         return
-    
     conn, cursor = ensure_connection()
-    cursor.execute("INSERT INTO reminders (user_id, reminder_text, reminder_time, created_at, status) VALUES (?, ?, ?, ?, 'pending')",
+    cursor.execute("INSERT INTO reminders (user_id, reminder_text, reminder_time, created_at) VALUES (?, ?, ?, ?)",
                   (update.message.from_user.id, message, reminder_time.strftime("%Y-%m-%d %H:%M:%S"), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
     conn.commit()
-    reminder_id = cursor.lastrowid
-    
-    await update.message.reply_text(f"✅ Reminder set!\n\n📝 {message}\n⏰ {reminder_time.strftime('%Y-%m-%d %H:%M')}\n🆔 ID: `{reminder_id}`", parse_mode='Markdown')
+    await update.message.reply_text(f"✅ Reminder set!\n\n📝 {message}\n⏰ {reminder_time.strftime('%Y-%m-%d %H:%M')}", parse_mode='Markdown')
 
 async def myreminders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn, cursor = ensure_connection()
     cursor.execute("SELECT id, reminder_text, reminder_time FROM reminders WHERE user_id = ? AND status = 'pending' ORDER BY reminder_time", (update.message.from_user.id,))
-    reminders = cursor.fetchall()
-    
-    if not reminders:
+    reminders_list = cursor.fetchall()
+    if not reminders_list:
         await update.message.reply_text("📭 No pending reminders.", parse_mode='Markdown')
         return
-    
     text = "📋 **Your Reminders:**\n\n"
-    for r in reminders:
+    for r in reminders_list:
         text += f"🆔 `{r[0]}` • {r[1]}\n   ⏰ {r[2]}\n\n"
     await update.message.reply_text(text, parse_mode='Markdown')
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("❌ Usage: `/cancel [id]`", parse_mode='Markdown')
-        return
-    
-    conn, cursor = ensure_connection()
-    cursor.execute("UPDATE reminders SET status = 'cancelled' WHERE id = ? AND user_id = ?", (context.args[0], update.message.from_user.id))
-    conn.commit()
-    await update.message.reply_text(f"✅ Reminder cancelled!" if cursor.rowcount > 0 else "❌ Reminder not found!", parse_mode='Markdown')
-
-async def clearreminders(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn, cursor = ensure_connection()
-    cursor.execute("UPDATE reminders SET status = 'cancelled' WHERE user_id = ? AND status = 'pending'", (update.message.from_user.id,))
-    conn.commit()
-    await update.message.reply_text("✅ All reminders cleared!", parse_mode='Markdown')
-
 # ================= FEEDBACK COMMANDS =================
+
 async def feedback_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("📝 **Send Feedback**\n\nUsage: `/feedback [message]`", parse_mode='Markdown')
+        await update.message.reply_text("📝 Usage: `/feedback [message]`", parse_mode='Markdown')
         return
-    
     user = update.message.from_user
     feedback_text = " ".join(context.args)
-    group_name = update.message.chat.title if update.message.chat.type in ['group', 'supergroup'] else None
-    
-    save_feedback(user.id, user.username, user.first_name, update.message.chat_id if group_name else None, group_name, feedback_text)
-    await update.message.reply_text(f"✅ **Thank you for your feedback!** 🙏", parse_mode='Markdown')
-    
+    save_feedback(user.id, user.username, user.first_name, update.message.chat_id, None, feedback_text)
+    await update.message.reply_text("✅ **Thank you for your feedback!** 🙏", parse_mode='Markdown')
     try:
         await context.bot.send_message(chat_id=OWNER_ID, text=f"📝 Feedback from {user.first_name}: {feedback_text}")
     except:
@@ -1622,17 +1528,13 @@ async def feedback_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def complaint_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("⚠️ **File a Complaint**\n\nUsage: `/complaint [message]`", parse_mode='Markdown')
+        await update.message.reply_text("⚠️ Usage: `/complaint [message]`", parse_mode='Markdown')
         return
-    
     user = update.message.from_user
     complaint_text = " ".join(context.args)
-    group_name = update.message.chat.title if update.message.chat.type in ['group', 'supergroup'] else None
-    
-    complaint_id = save_complaint(user.id, user.username, user.first_name, update.message.chat_id if group_name else None, group_name, complaint_text)
-    
+    complaint_id = save_complaint(user.id, user.username, user.first_name, update.message.chat_id, None, complaint_text)
     if complaint_id:
-        await update.message.reply_text(f"⚠️ **Complaint Registered**\n\n🆔 ID: `{complaint_id}`\n✅ Owner will review it soon.", parse_mode='Markdown')
+        await update.message.reply_text(f"⚠️ **Complaint Registered**\n\n🆔 ID: `{complaint_id}`", parse_mode='Markdown')
         try:
             await context.bot.send_message(chat_id=OWNER_ID, text=f"⚠️ Complaint #{complaint_id} from {user.first_name}: {complaint_text}")
         except:
@@ -1640,28 +1542,12 @@ async def complaint_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ Failed to register complaint.")
 
-async def complaint_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("❌ Usage: `/complaintstatus [id]`", parse_mode='Markdown')
-        return
-    
-    try:
-        cid = int(context.args[0])
-        conn, cursor = ensure_connection()
-        cursor.execute("SELECT complaint_text, status, created_at FROM complaints WHERE id = ?", (cid,))
-        result = cursor.fetchone()
-        if result:
-            await update.message.reply_text(f"⚠️ **Complaint #{cid}**\n\nIssue: {result[0]}\nStatus: {result[1].upper()}\nFiled: {result[2]}", parse_mode='Markdown')
-        else:
-            await update.message.reply_text("❌ Complaint not found!")
-    except:
-        await update.message.reply_text("❌ Invalid ID!")
-
 # ================= USER STATS COMMANDS =================
+
 async def user_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats = get_user_stats(update.message.from_user.id)
     if stats:
-        await update.message.reply_text(f"📊 **Your Stats**\n\n💬 Total: {stats[0]}\n📊 Today: {stats[3]}\n📅 Joined: {stats[1]}\n⏰ Last: {stats[2]}", parse_mode='Markdown')
+        await update.message.reply_text(f"📊 **Your Stats**\n\n💬 Total: {stats[0]}\n📊 Today: {stats[3]}\n📅 Joined: {stats[1]}", parse_mode='Markdown')
     else:
         await update.message.reply_text("No data yet. Start chatting!")
 
@@ -1670,7 +1556,6 @@ async def daily_usage(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cursor.execute("SELECT daily_usage_count FROM users WHERE id = ?", (update.message.from_user.id,))
     result = cursor.fetchone()
     usage = result[0] if result else 0
-    
     top = get_daily_top_users(5)
     text = f"📊 **Your Daily Usage:** {usage} messages\n\n🏆 **Today's Top Users:**\n"
     for i, (uid, un, name, count) in enumerate(top, 1):
@@ -1681,15 +1566,113 @@ async def daily_usage(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     prefs = get_user_preferences(update.message.from_user.id)
     keyboard = [
-        [InlineKeyboardButton("🌐 Language", callback_data="set_lang"),
-         InlineKeyboardButton("📝 Style", callback_data="set_style")],
-        [InlineKeyboardButton("🎨 Theme", callback_data="set_theme"),
-         InlineKeyboardButton("🗑️ Clear History", callback_data="clear_history")],
-        [InlineKeyboardButton("🔙 Back", callback_data="back_main")]
+        [InlineKeyboardButton("🌐 Language", callback_data="lang"), InlineKeyboardButton("📝 Style", callback_data="style")],
+        [InlineKeyboardButton("🗑️ Clear History", callback_data="clear")]
     ]
-    await update.message.reply_text(f"⚙️ **Settings**\n\nLanguage: {prefs['language']}\nStyle: {prefs['response_style']}\nTheme: {prefs['theme']}", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    await update.message.reply_text(f"⚙️ **Settings**\n\nLanguage: {prefs['language']}\nStyle: {prefs['response_style']}", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+# ================= CALLBACK HANDLER =================
+
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    data = query.data
+    await query.answer()
+    
+    if data == "study":
+        await query.edit_message_text("📚 **Study Commands**\n\n/notes [topic]\n/explain [topic]\n/mcq [topic]\n/pyq [subject]\n/doubt [q]\n/quiz [topic] [q]", parse_mode='Markdown')
+    elif data == "games":
+        await query.edit_message_text("🎮 **Games**\n\n/game - Guess number\n/quizgame - Quiz\n/hangman - Hangman\n/trivia - Trivia\n/tictactoe - Tic Tac Toe\n/dice - Dice game\n/meme - Memes\n/joke - Jokes\n/fact - Facts\n/quote - Quotes", parse_mode='Markdown')
+    elif data == "pdf":
+        await query.edit_message_text("📄 **PDF Commands**\n\n/pdf [topic]\n/pdfnotes [topic]\n/pdfdiagram [topic]", parse_mode='Markdown')
+    elif data == "rewards":
+        await query.edit_message_text("💰 **Rewards**\n\n/daily - Daily reward\n/leaderboard - Top players\n/points - Your points", parse_mode='Markdown')
+    elif data == "creative":
+        await query.edit_message_text("🎨 **Creative**\n\n/imagine [prompt]\n/voice [text]\n/analyze", parse_mode='Markdown')
+    elif data == "stats":
+        stats = get_user_stats(user_id)
+        pts, games, quizzes, streak = get_user_points(user_id)
+        if stats:
+            await query.edit_message_text(f"📊 **Your Stats**\n\n💬 Messages: {stats[0]}\n📊 Today: {stats[3]}\n💰 Points: {pts}\n🎮 Games Won: {games}\n🔥 Streak: {streak}", parse_mode='Markdown')
+    elif data == "settings":
+        prefs = get_user_preferences(user_id)
+        keyboard = [[InlineKeyboardButton("🇺🇸 English", callback_data="lang_en"), InlineKeyboardButton("🇮🇳 Hindi", callback_data="lang_hi")],
+                    [InlineKeyboardButton("📌 Concise", callback_data="style_concise"), InlineKeyboardButton("⚖️ Balanced", callback_data="style_balanced")],
+                    [InlineKeyboardButton("🗑️ Clear History", callback_data="clear")]]
+        await query.edit_message_text(f"⚙️ **Settings**\n\nLanguage: {prefs['language']}\nStyle: {prefs['response_style']}", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    elif data.startswith("lang_"):
+        set_user_preference(user_id, "language", data.replace("lang_", ""))
+        await query.edit_message_text("✅ Language set!")
+    elif data.startswith("style_"):
+        set_user_preference(user_id, "response_style", data.replace("style_", ""))
+        await query.edit_message_text("✅ Style set!")
+    elif data == "clear":
+        clear_user_history(user_id)
+        await query.edit_message_text("✅ Chat history cleared!")
+    elif data.startswith("show_"):
+        card_id = int(data.split("_")[1])
+        conn, cursor = ensure_connection()
+        cursor.execute("SELECT question, answer FROM flashcards WHERE id = ?", (card_id,))
+        result = cursor.fetchone()
+        if result:
+            await query.edit_message_text(f"❓ {result[0]}\n\n💡 {result[1]}", parse_mode='Markdown')
+
+# ================= MESSAGE HANDLER =================
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.from_user or update.message.from_user.is_bot:
+        return
+    
+    conn, cursor = ensure_connection()
+    cursor.execute("SELECT is_blocked FROM users WHERE id = ?", (update.message.from_user.id,))
+    result = cursor.fetchone()
+    if result and result[0] == 1:
+        return
+    
+    def should_respond(msg):
+        if msg.chat.type == "private":
+            return True
+        if msg.text and BOT_USERNAME.lower() in msg.text.lower():
+            return True
+        if msg.reply_to_message and msg.reply_to_message.from_user and msg.reply_to_message.from_user.username == BOT_USERNAME.replace("@", ""):
+            return True
+        return False
+    
+    if not should_respond(update.message):
+        return
+    
+    update_user_activity(update.message.from_user.id, update.message.chat.type, update.message.chat_id, update.message.chat.title if update.message.chat.type in ['group', 'supergroup'] else None)
+    await context.bot.send_chat_action(chat_id=update.message.chat_id, action="typing")
+    
+    if update.message.text:
+        text = update.message.text.replace(BOT_USERNAME, "").strip()
+        if not text:
+            text = "Hello"
+        reply = await ask_ai_hinglish(update.message.from_user.id, text)
+        save_chat_history(update.message.from_user.id, text, reply)
+        await update.message.reply_text(reply, parse_mode='Markdown')
+    elif update.message.voice:
+        file = await update.message.voice.get_file()
+        path = f"voice_{uuid.uuid4().hex[:6]}.ogg"
+        await file.download_to_drive(path)
+        text = voice_to_text(path)
+        await update.message.reply_text(f"📝 **You said:** {text}", parse_mode='Markdown')
+        reply = await ask_ai_hinglish(update.message.from_user.id, text)
+        await update.message.reply_text(reply, parse_mode='Markdown')
+        for f in [path, "voice.wav"]:
+            if os.path.exists(f):
+                os.remove(f)
+    elif update.message.photo:
+        file = await update.message.photo[-1].get_file()
+        path = f"img_{uuid.uuid4().hex[:6]}.jpg"
+        await file.download_to_drive(path)
+        reply = await analyze_image(path)
+        await update.message.reply_text(reply, parse_mode='Markdown')
+        if os.path.exists(path):
+            os.remove(path)
 
 # ================= OWNER COMMANDS =================
+
 async def users_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != OWNER_ID:
         await update.message.reply_text("❌ Unauthorized!")
@@ -1720,26 +1703,6 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
     await status.edit_text(f"✅ Sent to {sent} users!")
 
-async def group_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id != OWNER_ID:
-        await update.message.reply_text("❌ Unauthorized!")
-        return
-    message = " ".join(context.args)
-    if not message:
-        await update.message.reply_text("Usage: `/groupbroadcast [message]`", parse_mode='Markdown')
-        return
-    groups = get_all_groups()
-    sent = 0
-    status = await update.message.reply_text(f"📢 Broadcasting to {len(groups)} groups...")
-    for gid, name in groups:
-        try:
-            await context.bot.send_message(chat_id=gid, text=message)
-            sent += 1
-            await asyncio.sleep(0.05)
-        except:
-            pass
-    await status.edit_text(f"✅ Sent to {sent} groups!")
-
 async def stats_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != OWNER_ID:
         await update.message.reply_text("❌ Unauthorized!")
@@ -1749,309 +1712,33 @@ async def stats_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn, cursor = ensure_connection()
     cursor.execute("SELECT COUNT(*) FROM chat_history")
     chats = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM feedback")
-    feedbacks = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM complaints")
-    complaints = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM notes")
-    notes = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM flashcards")
-    cards = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM game_stats")
+    games_played = cursor.fetchone()[0]
+    cursor.execute("SELECT SUM(total_points) FROM user_scores")
+    total_points = cursor.fetchone()[0] or 0
     
     text = f"""
 📊 **BOT STATISTICS**
 
-👥 **Users:** {len(users)}
-👥 **Groups:** {len(groups)}
-💬 **Chats:** {chats}
-📝 **Feedback:** {feedbacks}
-⚠️ **Complaints:** {complaints}
-📚 **Notes:** {notes}
-🃏 **Flashcards:** {cards}
+👥 Users: {len(users)}
+👥 Groups: {len(groups)}
+💬 Chats: {chats}
+🎮 Games Played: {games_played}
+💰 Total Points: {total_points}
+📝 Feedback: {cursor.execute("SELECT COUNT(*) FROM feedback").fetchone()[0]}
+⚠️ Complaints: {cursor.execute("SELECT COUNT(*) FROM complaints").fetchone()[0]}
 
-**Status:** 🟢 Active
+Status: 🟢 Active
     """
     await update.message.reply_text(text, parse_mode='Markdown')
 
-async def add_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id != OWNER_ID:
-        await update.message.reply_text("❌ Unauthorized!")
-        return
-    if update.message.chat.type not in ['group', 'supergroup']:
-        await update.message.reply_text("❌ This command only works in groups!")
-        return
-    add_group(update.message.chat_id, update.message.chat.title)
-    await update.message.reply_text("✅ Group added!")
+# ================= MAIN =================
 
-async def remove_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id != OWNER_ID:
-        await update.message.reply_text("❌ Unauthorized!")
-        return
-    if not context.args:
-        await update.message.reply_text("Usage: `/removegroup [group_id]`", parse_mode='Markdown')
-        return
-    conn, cursor = ensure_connection()
-    cursor.execute("UPDATE groups SET is_active = 0 WHERE group_id = ?", (int(context.args[0]),))
-    conn.commit()
-    await update.message.reply_text("✅ Group removed!")
-
-async def get_all_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id != OWNER_ID:
-        await update.message.reply_text("❌ Unauthorized!")
-        return
-    conn, cursor = ensure_connection()
-    cursor.execute("SELECT id, username, user_name, feedback_text, created_at FROM feedback ORDER BY created_at DESC LIMIT 30")
-    fb = cursor.fetchall()
-    if not fb:
-        await update.message.reply_text("📭 No feedback yet!")
-        return
-    text = "📝 **Recent Feedback:**\n\n"
-    for f in fb:
-        text += f"🆔 `{f[0]}` | {f[2]} (@{f[1]})\n📝 {f[3][:100]}\n📅 {f[4]}\n\n"
-    await update.message.reply_text(text, parse_mode='Markdown')
-
-async def get_all_complaints(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id != OWNER_ID:
-        await update.message.reply_text("❌ Unauthorized!")
-        return
-    conn, cursor = ensure_connection()
-    cursor.execute("SELECT id, username, user_name, complaint_text, status, created_at FROM complaints ORDER BY created_at DESC LIMIT 30")
-    comp = cursor.fetchall()
-    if not comp:
-        await update.message.reply_text("📭 No complaints yet!")
-        return
-    text = "⚠️ **Recent Complaints:**\n\n"
-    for c in comp:
-        text += f"🆔 `{c[0]}` | {c[2]} (@{c[1]}) | Status: {c[4].upper()}\n📝 {c[3][:100]}\n📅 {c[5]}\n\n"
-    await update.message.reply_text(text, parse_mode='Markdown')
-
-async def resolve_complaint(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id != OWNER_ID:
-        await update.message.reply_text("❌ Unauthorized!")
-        return
-    if len(context.args) < 1:
-        await update.message.reply_text("❌ Usage: `/resolve [id]`", parse_mode='Markdown')
-        return
-    try:
-        cid = int(context.args[0])
-        conn, cursor = ensure_connection()
-        cursor.execute("SELECT user_id FROM complaints WHERE id = ?", (cid,))
-        result = cursor.fetchone()
-        if result:
-            cursor.execute("UPDATE complaints SET status = 'resolved', resolved_at = ? WHERE id = ?", (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), cid))
-            conn.commit()
-            try:
-                await context.bot.send_message(chat_id=result[0], text=f"✅ Your complaint #{cid} has been resolved!")
-            except:
-                pass
-            await update.message.reply_text(f"✅ Complaint `{cid}` resolved!", parse_mode='Markdown')
-        else:
-            await update.message.reply_text("❌ Complaint not found!")
-    except:
-        await update.message.reply_text("❌ Invalid ID!")
-
-async def block_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id != OWNER_ID:
-        await update.message.reply_text("❌ Unauthorized!")
-        return
-    if not context.args:
-        await update.message.reply_text("❌ Usage: `/block [user_id]`", parse_mode='Markdown')
-        return
-    try:
-        uid = int(context.args[0])
-        conn, cursor = ensure_connection()
-        cursor.execute("UPDATE users SET is_blocked = 1 WHERE id = ?", (uid,))
-        conn.commit()
-        await update.message.reply_text(f"✅ User `{uid}` blocked!", parse_mode='Markdown')
-    except:
-        await update.message.reply_text("❌ Error!")
-
-async def unblock_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id != OWNER_ID:
-        await update.message.reply_text("❌ Unauthorized!")
-        return
-    if not context.args:
-        await update.message.reply_text("❌ Usage: `/unblock [user_id]`", parse_mode='Markdown')
-        return
-    try:
-        uid = int(context.args[0])
-        conn, cursor = ensure_connection()
-        cursor.execute("UPDATE users SET is_blocked = 0 WHERE id = ?", (uid,))
-        conn.commit()
-        await update.message.reply_text(f"✅ User `{uid}` unblocked!", parse_mode='Markdown')
-    except:
-        await update.message.reply_text("❌ Error!")
-
-# ================= MAIN MESSAGE HANDLER =================
-async def handle_gen_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    parts = update.message.text.split()
-    if len(parts) < 2:
-        await update.message.reply_text("✨ **Quick Image**\n\n.gen [prompt]", parse_mode='Markdown')
-        return
-    
-    prompt = " ".join(parts[1:])
-    msg = await update.message.reply_text("🎨 Generating...")
-    filename = await generate_image(prompt)
-    if filename:
-        with open(filename, "rb") as f:
-            await update.message.reply_photo(photo=f, caption=f"🖼️ {prompt}")
-        os.remove(filename)
-        await msg.delete()
-    else:
-        await msg.edit_text("❌ Failed!")
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.from_user or update.message.from_user.is_bot:
-        return
-    
-    conn, cursor = ensure_connection()
-    cursor.execute("SELECT is_blocked FROM users WHERE id = ?", (update.message.from_user.id,))
-    result = cursor.fetchone()
-    if result and result[0] == 1:
-        return
-    
-    if update.message.text and update.message.text.startswith(".gen"):
-        await handle_gen_command(update, context)
-        return
-    
-    def should_respond(msg):
-        if msg.chat.type == "private":
-            return True
-        if msg.text and BOT_USERNAME.lower() in msg.text.lower():
-            return True
-        if msg.reply_to_message and msg.reply_to_message.from_user and msg.reply_to_message.from_user.username == BOT_USERNAME.replace("@", ""):
-            return True
-        return False
-    
-    if not should_respond(update.message):
-        return
-    
-    update_user_activity(update.message.from_user.id, update.message.chat.type, update.message.chat_id, update.message.chat.title if update.message.chat.type in ['group', 'supergroup'] else None)
-    
-    await context.bot.send_chat_action(chat_id=update.message.chat_id, action="typing")
-    
-    if update.message.text:
-        text = update.message.text.replace(BOT_USERNAME, "").strip()
-        if not text:
-            text = "Hello"
-        reply = await ask_ai_hinglish(update.message.from_user.id, text)
-        save_chat_history(update.message.from_user.id, text, reply)
-        await update.message.reply_text(reply, parse_mode='Markdown')
-        
-    elif update.message.voice:
-        file = await update.message.voice.get_file()
-        path = f"voice_{uuid.uuid4().hex[:6]}.ogg"
-        await file.download_to_drive(path)
-        text = voice_to_text(path)
-        await update.message.reply_text(f"📝 **You said:** {text}", parse_mode='Markdown')
-        reply = await ask_ai_hinglish(update.message.from_user.id, text)
-        await update.message.reply_text(reply, parse_mode='Markdown')
-        if os.path.exists(path):
-            os.remove(path)
-        if os.path.exists("voice.wav"):
-            os.remove("voice.wav")
-            
-    elif update.message.photo:
-        file = await update.message.photo[-1].get_file()
-        path = f"img_{uuid.uuid4().hex[:6]}.jpg"
-        await file.download_to_drive(path)
-        reply = await analyze_image(path)
-        await update.message.reply_text(reply, parse_mode='Markdown')
-        if os.path.exists(path):
-            os.remove(path)
-
-# ================= BUTTON CALLBACK =================
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-    data = query.data
-    await query.answer()
-    
-    if data == "study_help":
-        await query.edit_message_text("📚 **Study Commands**\n\n/notes [topic]\n/explain [topic]\n/mcq [topic]\n/pyq [subject]\n/doubt [q]\n/quiz [topic] [q]", parse_mode='Markdown')
-    elif data == "pdf_help":
-        await query.edit_message_text("📄 **PDF Commands**\n\n/pdf [topic] - Complete PDF with diagram\n/pdfnotes [topic] - Simple PDF\n/pdfdiagram [topic] - PDF with diagram only", parse_mode='Markdown')
-    elif data == "creative":
-        await query.edit_message_text("🎨 **Creative Commands**\n\n/imagine [prompt]\n/draw [prompt]\n/voice [text]\n.gen [prompt]\n/analyze", parse_mode='Markdown')
-    elif data == "notes_menu":
-        await query.edit_message_text("📝 **Note Commands**\n\n/addnote [title] [content]\n/mynotes\n/editnote [id] [content]\n/deletenote [id]", parse_mode='Markdown')
-    elif data == "flashcards_menu":
-        await query.edit_message_text("🃏 **Flashcard Commands**\n\n/addcard [q] [a]\n/mycards\n/study", parse_mode='Markdown')
-    elif data == "reminders":
-        await query.edit_message_text("⏰ **Reminder Commands**\n\n/remind [time] [msg]\n/myreminders\n/cancel [id]\n/clearreminders", parse_mode='Markdown')
-    elif data == "stats":
-        stats = get_user_stats(user_id)
-        if stats:
-            await query.edit_message_text(f"📊 **Your Stats**\n\n💬 Total: {stats[0]}\n📊 Today: {stats[3]}\n📅 Joined: {stats[1]}", parse_mode='Markdown')
-        else:
-            await query.edit_message_text("No stats found", parse_mode='Markdown')
-    elif data == "settings":
-        prefs = get_user_preferences(user_id)
-        keyboard = [
-            [InlineKeyboardButton("🌐 Language", callback_data="set_lang"),
-             InlineKeyboardButton("📝 Style", callback_data="set_style")],
-            [InlineKeyboardButton("🎨 Theme", callback_data="set_theme"),
-             InlineKeyboardButton("🗑️ Clear History", callback_data="clear_history")],
-            [InlineKeyboardButton("🔙 Back", callback_data="back_main")]
-        ]
-        await query.edit_message_text(f"⚙️ **Settings**\n\nLanguage: {prefs['language']}\nStyle: {prefs['response_style']}\nTheme: {prefs['theme']}", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-    elif data == "set_lang":
-        keyboard = [[InlineKeyboardButton("🇺🇸 English", callback_data="lang_en"), InlineKeyboardButton("🇮🇳 Hindi", callback_data="lang_hi")], [InlineKeyboardButton("🔙 Back", callback_data="settings")]]
-        await query.edit_message_text("🌐 **Select Language**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-    elif data.startswith("lang_"):
-        set_user_preference(user_id, "language", data.replace("lang_", ""))
-        await query.edit_message_text("✅ Language set!")
-    elif data == "set_style":
-        keyboard = [[InlineKeyboardButton("📌 Concise", callback_data="style_concise"), InlineKeyboardButton("⚖️ Balanced", callback_data="style_balanced")], [InlineKeyboardButton("📚 Detailed", callback_data="style_detailed"), InlineKeyboardButton("🔙 Back", callback_data="settings")]]
-        await query.edit_message_text("📝 **Response Style**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-    elif data.startswith("style_"):
-        set_user_preference(user_id, "response_style", data.replace("style_", ""))
-        await query.edit_message_text("✅ Style set!")
-    elif data == "set_theme":
-        keyboard = [[InlineKeyboardButton("🌞 Light", callback_data="theme_light"), InlineKeyboardButton("🌙 Dark", callback_data="theme_dark")], [InlineKeyboardButton("🔙 Back", callback_data="settings")]]
-        await query.edit_message_text("🎨 **Select Theme**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-    elif data.startswith("theme_"):
-        set_user_preference(user_id, "theme", data.replace("theme_", ""))
-        await query.edit_message_text("✅ Theme set!")
-    elif data == "clear_history":
-        clear_user_history(user_id)
-        await query.edit_message_text("✅ Chat history cleared!")
-    elif data == "back_main":
-        keyboard = [
-            [InlineKeyboardButton("📚 Study", callback_data="study_help"), InlineKeyboardButton("📄 PDF", callback_data="pdf_help")],
-            [InlineKeyboardButton("🎨 Creative", callback_data="creative"), InlineKeyboardButton("📝 Notes", callback_data="notes_menu")],
-            [InlineKeyboardButton("🃏 Flashcards", callback_data="flashcards_menu"), InlineKeyboardButton("⏰ Reminders", callback_data="reminders")],
-            [InlineKeyboardButton("⚙️ Settings", callback_data="settings"), InlineKeyboardButton("📊 Stats", callback_data="stats")]
-        ]
-        await query.edit_message_text("🌟 **Welcome back!**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-    elif data.startswith("show_answer_"):
-        card_id = int(data.split("_")[2])
-        conn, cursor = ensure_connection()
-        cursor.execute("SELECT question, answer FROM flashcards WHERE id = ?", (card_id,))
-        result = cursor.fetchone()
-        if result:
-            await query.edit_message_text(f"❓ **Question:** {result[0]}\n\n💡 **Answer:** {result[1]}", parse_mode='Markdown')
-
-# ================= CHECK REMINDERS =================
-async def check_reminders(context: ContextTypes.DEFAULT_TYPE):
-    try:
-        while not reminder_queue.empty():
-            reminder = reminder_queue.get_nowait()
-            rid, uid, msg, rt = reminder
-            try:
-                await context.bot.send_message(chat_id=uid, text=f"⏰ **REMINDER!** ⏰\n\n{msg}", parse_mode='Markdown')
-            except:
-                pass
-    except:
-        pass
-
-# ================= POST INIT =================
 async def post_init(application):
     logger.info(f"🚀 Study Controller Bot Started!")
     logger.info(f"Bot: @{application.bot.username}")
-    logger.info("PDF Generation with Diagrams: ✅ Active")
+    logger.info("All features active: Games, PDF, Face Recognition, Notes, Flashcards, Reminders!")
 
-# ================= MAIN =================
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
     
@@ -2059,31 +1746,47 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("stats", user_stats))
-    app.add_handler(CommandHandler("settings", settings))
     app.add_handler(CommandHandler("daily", daily_usage))
-    
-    # Feedback commands
-    app.add_handler(CommandHandler("feedback", feedback_command))
-    app.add_handler(CommandHandler("complaint", complaint_command))
-    app.add_handler(CommandHandler("complaintstatus", complaint_status))
+    app.add_handler(CommandHandler("settings", settings))
+    app.add_handler(CommandHandler("points", points))
+    app.add_handler(CommandHandler("leaderboard", leaderboard))
     
     # Study commands
     app.add_handler(CommandHandler("notes", notes))
     app.add_handler(CommandHandler("explain", explain))
     app.add_handler(CommandHandler("mcq", mcq))
-    app.add_handler(CommandHandler("pyq", pyq))
     app.add_handler(CommandHandler("doubt", doubt))
-    app.add_handler(CommandHandler("quiz", quiz_command))
     
     # PDF commands
     app.add_handler(CommandHandler("pdf", pdf_full))
     app.add_handler(CommandHandler("pdfnotes", pdf_notes))
     app.add_handler(CommandHandler("pdfdiagram", pdf_diagram))
     
+    # Game commands
+    app.add_handler(CommandHandler("game", guess_game))
+    app.add_handler(CommandHandler("guess", guess_number))
+    app.add_handler(CommandHandler("quizgame", quiz_game))
+    app.add_handler(CommandHandler("hangman", hangman))
+    app.add_handler(CommandHandler("trivia", trivia))
+    app.add_handler(CommandHandler("tictactoe", tictactoe))
+    app.add_handler(CommandHandler("dice", dice_game))
+    
+    # Entertainment commands
+    app.add_handler(CommandHandler("meme", meme))
+    app.add_handler(CommandHandler("joke", joke))
+    app.add_handler(CommandHandler("fact", funfact))
+    app.add_handler(CommandHandler("quote", quote))
+    app.add_handler(CommandHandler("weather", weather))
+    app.add_handler(CommandHandler("daily", daily_reward))
+    
+    # Creative commands
+    app.add_handler(CommandHandler("imagine", imagine))
+    app.add_handler(CommandHandler("voice", voice_command))
+    app.add_handler(CommandHandler("analyze", analyze_command))
+    
     # Note commands
     app.add_handler(CommandHandler("addnote", add_note_command))
     app.add_handler(CommandHandler("mynotes", my_notes))
-    app.add_handler(CommandHandler("editnote", edit_note))
     app.add_handler(CommandHandler("deletenote", delete_note))
     
     # Flashcard commands
@@ -2091,37 +1794,27 @@ def main():
     app.add_handler(CommandHandler("mycards", my_flashcards))
     app.add_handler(CommandHandler("study", study_flashcards))
     
-    # Creative commands
-    app.add_handler(CommandHandler("imagine", imagine))
-    app.add_handler(CommandHandler("draw", draw))
-    app.add_handler(CommandHandler("generate", generate))
-    app.add_handler(CommandHandler("voice", voice_command))
-    app.add_handler(CommandHandler("enhance", enhance))
-    app.add_handler(CommandHandler("analyze", analyze_command))
-    
     # Reminder commands
     app.add_handler(CommandHandler("remind", remind))
     app.add_handler(CommandHandler("myreminders", myreminders))
-    app.add_handler(CommandHandler("cancel", cancel))
-    app.add_handler(CommandHandler("clearreminders", clearreminders))
+    
+    # Feedback commands
+    app.add_handler(CommandHandler("feedback", feedback_command))
+    app.add_handler(CommandHandler("complaint", complaint_command))
     
     # Owner commands
     app.add_handler(CommandHandler("users", users_count))
     app.add_handler(CommandHandler("broadcast", broadcast))
-    app.add_handler(CommandHandler("groupbroadcast", group_broadcast))
-    app.add_handler(CommandHandler("addgroup", add_group_command))
-    app.add_handler(CommandHandler("removegroup", remove_group_command))
     app.add_handler(CommandHandler("statsall", stats_all))
-    app.add_handler(CommandHandler("feedbacklist", get_all_feedback))
-    app.add_handler(CommandHandler("complaintslist", get_all_complaints))
-    app.add_handler(CommandHandler("resolve", resolve_complaint))
-    app.add_handler(CommandHandler("block", block_user))
-    app.add_handler(CommandHandler("unblock", unblock_user))
     
-    # Callback handler
+    # Callbacks
+    app.add_handler(CallbackQueryHandler(quiz_callback, pattern="quiz_"))
+    app.add_handler(CallbackQueryHandler(hangman_callback, pattern="hang"))
+    app.add_handler(CallbackQueryHandler(trivia_callback, pattern="triv_"))
+    app.add_handler(CallbackQueryHandler(ttt_callback, pattern="ttt"))
     app.add_handler(CallbackQueryHandler(button_callback))
     
-    # Main message handler
+    # Message handler
     app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO | filters.VOICE, handle_message))
     
     # Job queue
